@@ -15,7 +15,7 @@ import { getGameStatus } from 'src/chess/getGameStatus';
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: 'http://localhost:3000',
   },
 })
 export class GameGateway {
@@ -122,6 +122,26 @@ export class GameGateway {
 
     const nextTurn = turn === 'white' ? 'black' : 'white';
 
+    // 🕛 Timeout logic
+    const now = Date.now();
+    const elapsed = now - game.lastTimestamp;
+
+    if (game.turn === 'white') {
+      game.time.white -= elapsed;
+      if (game.time.white <= 0) {
+        return this.endOnTimeout(data.gameId, 'black');
+      }
+      game.time.white += game.increment;
+    } else {
+      game.time.black -= elapsed;
+      if (game.time.black <= 0) {
+        return this.endOnTimeout(data.gameId, 'white');
+      }
+      game.time.black += game.increment;
+    }
+
+    game.lastTimestamp = now;
+    game.turn = nextTurn;
     game.board = newBoard;
     game.turn = nextTurn;
     game.moveCount++;
@@ -135,6 +155,13 @@ export class GameGateway {
       board: newBoard,
       turn: nextTurn,
       status,
+    });
+
+    this.server.to(data.gameId).emit('state_update', {
+      board: newBoard,
+      turn: nextTurn,
+      time: game.time,
+      lastTimestamp: game.lastTimestamp,
     });
 
     await this.gamePersistence.saveMove(
@@ -155,5 +182,17 @@ export class GameGateway {
     if (status.state === 'stalemate') {
       await this.gamePersistence.endGame(data.gameId, GameResult.DRAW);
     }
+  }
+
+  // 🕛 Update winner in database
+  private async endOnTimeout(gameId: string, winner: 'white' | 'black') {
+    this.server.to(gameId).emit('timeout', { winner });
+
+    await this.gamePersistence.endGame(
+      gameId,
+      winner === 'white' ? 'WHITE_WIN' : 'BLACK_WIN',
+    );
+
+    console.log(`Game ${gameId} ended on time. Winner: ${winner}`);
   }
 }

@@ -34,10 +34,18 @@ export class MatchmakingService {
     const white = Math.random() < 0.5 ? p1 : p2;
     const black = white === p1 ? p2 : p1;
 
-    createGame(gameId, {
-      white: white.id,
-      black: black.id,
-    });
+    const timeMs = 5 * 60 * 1000;
+    const incrementMs = 0;
+
+    createGame(
+      gameId,
+      {
+        white: white.id,
+        black: black.id,
+      },
+      timeMs,
+      incrementMs,
+    );
 
     await white.join(gameId);
     await black.join(gameId);
@@ -45,11 +53,17 @@ export class MatchmakingService {
     white.emit('match_found', {
       gameId,
       color: 'white',
+      timeMs,
+      incrementMs,
+      lastTimestamp: Date.now(),
     });
 
     black.emit('match_found', {
       gameId,
       color: 'black',
+      timeMs,
+      incrementMs,
+      lastTimestamp: Date.now(),
     });
 
     await this.gamePersistence.createGame(gameId);
