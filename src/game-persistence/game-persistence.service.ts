@@ -5,9 +5,9 @@ import { GameResult } from 'generated/prisma/client';
 @Injectable()
 export class GamePersistenceService {
   constructor(private readonly prisma: PrismaService) {}
-  async createGame(gameId: string) {
+  async createGame(gameId: string, whiteId: string, blackId: string) {
     await this.prisma.game.create({
-      data: { id: gameId },
+      data: { id: gameId, whiteId, blackId },
     });
   }
 

@@ -14,12 +14,44 @@ generator client {
   moduleFormat  = "cjs"
 }
 
+model User {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  email     String   @unique
+  password  String?
+  name      String?
+  avatar    String?
+
+  googleId  String?  @unique
+  githubId  String?  @unique
+
+  whiteGames Game[]  @relation("WhitePlayer")
+  blackGames Game[]  @relation("BlackPlayer")
+
+  rating    Int      @default(1200)
+
+  RefreshTokens RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  tokenHash String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  expiresAt DateTime @default(dbgenerated("NOW() + INTERVAL '7 days'"))
+}
+
 model Game {
   id        String   @id @default(uuid())
   createdAt DateTime @default(now())
   endedAt   DateTime?
 
+  white     User?    @relation("WhitePlayer", fields: [whiteId], references: [id])
   whiteId   String?
+
+  black     User?    @relation("BlackPlayer", fields: [blackId], references: [id])
   blackId   String?
 
   result    GameResult @default(ONGOING)

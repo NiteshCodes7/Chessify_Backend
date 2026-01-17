@@ -3,9 +3,11 @@ import { Socket } from 'socket.io';
 import { randomUUID } from 'crypto';
 import { createGame } from '../game/game.store';
 import { GamePersistenceService } from '../game-persistence/game-persistence.service';
+import { playerGameMap } from 'src/game/player-map';
 
 type QueuedPlayer = {
   socket: Socket;
+  userId: string;
 };
 
 @Injectable()
@@ -15,12 +17,16 @@ export class MatchmakingService {
   private queue: QueuedPlayer[] = [];
 
   async addPlayer(socket: Socket) {
+    const { userId } = socket.data as { userId?: string };
+    if (!userId) return;
     // If someone is already waiting → match
+    if (this.queue.find((p) => p.userId === userId)) return;
+
     if (this.queue.length > 0) {
       const opponent = this.queue.shift()!;
-      await this.createGame(opponent.socket, socket);
+      await this.createGame(opponent, { socket, userId });
     } else {
-      this.queue.push({ socket });
+      this.queue.push({ socket, userId });
     }
   }
 
@@ -28,7 +34,7 @@ export class MatchmakingService {
     this.queue = this.queue.filter((p) => p.socket.id !== socketId);
   }
 
-  private async createGame(p1: Socket, p2: Socket) {
+  private async createGame(p1: QueuedPlayer, p2: QueuedPlayer) {
     const gameId = randomUUID();
 
     const white = Math.random() < 0.5 ? p1 : p2;
@@ -40,17 +46,17 @@ export class MatchmakingService {
     createGame(
       gameId,
       {
-        white: white.id,
-        black: black.id,
+        white: white.userId,
+        black: black.userId,
       },
       timeMs,
       incrementMs,
     );
 
-    await white.join(gameId);
-    await black.join(gameId);
+    await white.socket.join(gameId);
+    await black.socket.join(gameId);
 
-    white.emit('match_found', {
+    white.socket.emit('match_found', {
       gameId,
       color: 'white',
       timeMs,
@@ -58,7 +64,7 @@ export class MatchmakingService {
       lastTimestamp: Date.now(),
     });
 
-    black.emit('match_found', {
+    black.socket.emit('match_found', {
       gameId,
       color: 'black',
       timeMs,
@@ -66,7 +72,10 @@ export class MatchmakingService {
       lastTimestamp: Date.now(),
     });
 
-    await this.gamePersistence.createGame(gameId);
+    playerGameMap.set(white.userId, { gameId, color: 'white' });
+    playerGameMap.set(black.userId, { gameId, color: 'black' });
+
+    await this.gamePersistence.createGame(gameId, white.userId, black.userId);
 
     console.log(`Game ${gameId} created`);
   }

@@ -12,24 +12,50 @@ import { getGame } from './game.store';
 import { GamePersistenceService } from '../game-persistence/game-persistence.service';
 import { GameResult } from 'generated/prisma/client';
 import { getGameStatus } from 'src/chess/getGameStatus';
+import { playerGameMap } from './player-map';
+import { JwtService } from '@nestjs/jwt';
+
+//Omit helping to remove data property from Socket io and then replacing it with mine
+type ExtendedSocket = Omit<Socket, 'data'> & {
+  data: {
+    userId?: string;
+  };
+};
 
 @WebSocketGateway({
   cors: {
     origin: 'http://localhost:3000',
+    credentials: true,
   },
 })
 export class GameGateway {
   constructor(
     private readonly matchmaking: MatchmakingService,
     private readonly gamePersistence: GamePersistenceService,
+    private readonly jwt: JwtService,
   ) {}
 
   @WebSocketServer()
   server: Server;
 
   // 🧠 When a client connects
-  handleConnection(socket: Socket) {
-    console.log('Client connected:', socket.id);
+  handleConnection(socket: ExtendedSocket) {
+    const auth = socket.handshake?.auth as { token?: unknown } | undefined;
+    const token = typeof auth?.token === 'string' ? auth.token : undefined;
+
+    try {
+      if (!token) throw new Error('No token provided');
+
+      const payload = this.jwt.verify<{ sub: string; email: string }>(token, {
+        secret: process.env.JWT_ACCESS_SECRET!,
+      });
+      socket.data.userId = payload.sub;
+      console.log(`WS connected: user=${payload.sub}`);
+    } catch (e) {
+      console.log('WS auth failed', e);
+      socket.disconnect();
+      return;
+    }
   }
 
   // 🧠 When a client disconnects
@@ -54,10 +80,56 @@ export class GameGateway {
     console.log(`Socket ${socket.id} joined game ${gameId}`);
   }
 
+  // 🔗 Reconnect user if refreshed or connection lost
+  @SubscribeMessage('reconnect')
+  async handleReconnect(@ConnectedSocket() socket: ExtendedSocket) {
+    const userId = socket.data.userId;
+    if (!userId) return;
+
+    const data = playerGameMap.get(userId);
+
+    if (!data) return socket.emit('no_active_game');
+
+    const { gameId, color } = data;
+    const game = getGame(gameId);
+    if (!game) return socket.emit('no_active_game');
+
+    await socket.join(gameId);
+
+    socket.emit('reconnected', {
+      gameId,
+      color,
+      board: game.board,
+      turn: game.turn,
+      time: game.time,
+      lastTimestamp: game.lastTimestamp,
+    });
+  }
+
+  // 👓 Spectators connection
+  @SubscribeMessage('spectate')
+  async handleSpectate(
+    @MessageBody() gameId: string,
+    @ConnectedSocket() socket: Socket,
+  ) {
+    const game = getGame(gameId);
+    if (!game) return;
+
+    await socket.join(gameId);
+
+    // Send current state immediately
+    socket.emit('state_update', {
+      board: game.board,
+      turn: game.turn,
+      time: game.time,
+      lastTimestamp: game.lastTimestamp,
+    });
+  }
+
   // ♟️ Relay move to opponent
   @SubscribeMessage('move')
   async handleMove(
-    @ConnectedSocket() socket: Socket,
+    @ConnectedSocket() socket: ExtendedSocket,
     @MessageBody()
     data: {
       gameId: string;
@@ -68,13 +140,20 @@ export class GameGateway {
     const game = getGame(data.gameId);
     if (!game) return;
 
-    // Auth expected in this as white: usedId1 and black: userId2
-    // const expectedSocketId =
-    //   game.turn === 'white' ? game.players.white : game.players.black;
+    const userId = socket.data.userId;
+    if (!userId) return;
 
-    // if (socket.id !== expectedSocketId) {
-    //   return;
-    // }
+    // Enforce turn ownership
+    const isWhiteTurn = game.turn === 'white';
+    const isBlackTurn = game.turn === 'black';
+
+    if (isWhiteTurn && userId !== game.players.white) {
+      return socket.emit('move_denied', { reason: 'Not your turn (white)' });
+    }
+
+    if (isBlackTurn && userId !== game.players.black) {
+      return socket.emit('move_denied', { reason: 'Not your turn (black)' });
+    }
 
     const { board, turn } = game;
     const piece = board[data.from.row][data.from.col];
@@ -141,7 +220,6 @@ export class GameGateway {
     }
 
     game.lastTimestamp = now;
-    game.turn = nextTurn;
     game.board = newBoard;
     game.turn = nextTurn;
     game.moveCount++;
@@ -177,6 +255,7 @@ export class GameGateway {
         data.gameId,
         status.winner === 'white' ? GameResult.WHITE_WIN : GameResult.BLACK_WIN,
       );
+      playerGameMap.delete(userId);
     }
 
     if (status.state === 'stalemate') {
@@ -192,6 +271,12 @@ export class GameGateway {
       gameId,
       winner === 'white' ? 'WHITE_WIN' : 'BLACK_WIN',
     );
+
+    const game = getGame(gameId);
+    if (game) {
+      playerGameMap.delete(game.players.white);
+      playerGameMap.delete(game.players.black);
+    }
 
     console.log(`Game ${gameId} ended on time. Winner: ${winner}`);
   }

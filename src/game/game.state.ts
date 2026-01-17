@@ -9,9 +9,9 @@ export type GameState = {
   };
   moveCount: number;
   time: {
-    white: number; // ms remaining
-    black: number; // ms remaining
+    white: number;
+    black: number;
   };
-  lastTimestamp: number; // server timestamp ms
-  increment: number; // ms per move
+  lastTimestamp: number;
+  increment: number;
 };
