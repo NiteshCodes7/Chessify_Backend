@@ -69,11 +69,12 @@ export class AuthService {
 
     const accessToken = await this.jwt.signAsync(
       { sub: userId },
-      { secret: process.env.JWT_ACCESS_SECRET!, expiresIn: '10m' },
+      { secret: process.env.JWT_ACCESS_SECRET!, expiresIn: '1m' },
     );
 
     const refreshToken = randomUUID();
     const tokenHash = await bcrypt.hash(refreshToken, 10);
+    const wsToken = await this.createWsToken(userId);
 
     await this.prisma.refreshToken.create({
       data: {
@@ -83,7 +84,18 @@ export class AuthService {
       },
     });
 
-    return { accessToken, refreshToken };
+    return { accessToken, refreshToken, wsToken };
+  }
+
+  // Create WS Token
+  async createWsToken(userId: string) {
+    return await this.jwt.signAsync(
+      { sub: userId },
+      {
+        secret: process.env.JWT_WS_SECRET!,
+        expiresIn: '12h',
+      },
+    );
   }
 
   // REFRESH TOKENS
@@ -93,13 +105,6 @@ export class AuthService {
       bcrypt.compareSync(refreshToken, rt.tokenHash),
     );
     if (!match) throw new UnauthorizedException('Invalid refresh token');
-
-    if (match.expiresAt < new Date()) {
-      await this.prisma.refreshToken.delete({ where: { id: match.id } });
-      throw new UnauthorizedException('Refresh token expired');
-    }
-
-    await this.prisma.refreshToken.delete({ where: { id: match.id } });
 
     return this.issueTokens(match.userId);
   }

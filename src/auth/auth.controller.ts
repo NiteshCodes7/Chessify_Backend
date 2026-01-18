@@ -46,7 +46,7 @@ export class AuthController {
 
   @Post('register')
   async register(@Body() body, @Res() res: Response) {
-    const { accessToken, refreshToken } = await this.auth.register(
+    const { accessToken, refreshToken, wsToken } = await this.auth.register(
       body.email,
       body.password,
       body.name,
@@ -60,13 +60,15 @@ export class AuthController {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    return res.send({ accessToken });
+    return res.send({ accessToken, wsToken });
   }
 
   @Post('login')
   async login(@Body() body, @Res() res: Response) {
     const user = await this.auth.validateUser(body.email, body.password);
-    const { accessToken, refreshToken } = await this.auth.issueTokens(user.id);
+    const { accessToken, refreshToken, wsToken } = await this.auth.issueTokens(
+      user.id,
+    );
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
@@ -76,7 +78,7 @@ export class AuthController {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    return res.send({ accessToken });
+    return res.send({ accessToken, wsToken });
   }
 
   @Post('refresh')
@@ -84,7 +86,8 @@ export class AuthController {
     const token = req.cookies.refreshToken;
     if (!token) throw new UnauthorizedException('No refresh cookie');
 
-    const { accessToken, refreshToken } = await this.auth.refreshTokens(token);
+    const { accessToken, refreshToken, wsToken } =
+      await this.auth.refreshTokens(token);
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
@@ -94,7 +97,7 @@ export class AuthController {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    return res.send({ accessToken });
+    return res.send({ accessToken, wsToken });
   }
 
   @Post('logout')

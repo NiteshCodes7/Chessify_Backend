@@ -8,7 +8,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { MatchmakingService } from '../matchmaking/matchmaking.service';
 import { isMoveLegal } from '../chess/isMoveLegal';
-import { getGame } from './game.store';
+import { games, getGame } from './game.store';
 import { GamePersistenceService } from '../game-persistence/game-persistence.service';
 import { GameResult } from 'generated/prisma/client';
 import { getGameStatus } from 'src/chess/getGameStatus';
@@ -40,21 +40,24 @@ export class GameGateway {
 
   // 🧠 When a client connects
   handleConnection(socket: ExtendedSocket) {
-    const auth = socket.handshake?.auth as { token?: unknown } | undefined;
-    const token = typeof auth?.token === 'string' ? auth.token : undefined;
+    const auth = socket.handshake?.auth as { wsToken?: unknown } | undefined;
+    const token = typeof auth?.wsToken === 'string' ? auth.wsToken : undefined;
 
     try {
-      if (!token) throw new Error('No token provided');
+      if (!token) {
+        socket.emit('ws_unauthorized', { reason: 'missing_ws_token' });
+        return socket.disconnect();
+      }
 
       const payload = this.jwt.verify<{ sub: string; email: string }>(token, {
-        secret: process.env.JWT_ACCESS_SECRET!,
+        secret: process.env.JWT_WS_SECRET!,
       });
       socket.data.userId = payload.sub;
       console.log(`WS connected: user=${payload.sub}`);
     } catch (e) {
       console.log('WS auth failed', e);
+      socket.emit('ws_unauthorized', { reason: 'invalid_or_expired' });
       socket.disconnect();
-      return;
     }
   }
 
@@ -110,10 +113,18 @@ export class GameGateway {
   @SubscribeMessage('spectate')
   async handleSpectate(
     @MessageBody() gameId: string,
-    @ConnectedSocket() socket: Socket,
+    @ConnectedSocket() socket: ExtendedSocket,
   ) {
     const game = getGame(gameId);
     if (!game) return;
+
+    const isPlayerInAnyGame = [...games.values()].some(
+      (g) =>
+        g.players.white === socket.data.userId ||
+        g.players.black === socket.data.userId,
+    );
+
+    if (isPlayerInAnyGame) return;
 
     await socket.join(gameId);
 
@@ -256,10 +267,13 @@ export class GameGateway {
         status.winner === 'white' ? GameResult.WHITE_WIN : GameResult.BLACK_WIN,
       );
       playerGameMap.delete(userId);
+      games.delete(data.gameId);
     }
 
     if (status.state === 'stalemate') {
       await this.gamePersistence.endGame(data.gameId, GameResult.DRAW);
+      playerGameMap.delete(userId);
+      games.delete(data.gameId);
     }
   }
 
@@ -277,6 +291,8 @@ export class GameGateway {
       playerGameMap.delete(game.players.white);
       playerGameMap.delete(game.players.black);
     }
+
+    games.delete(gameId);
 
     console.log(`Game ${gameId} ended on time. Winner: ${winner}`);
   }
