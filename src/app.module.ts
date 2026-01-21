@@ -7,6 +7,9 @@ import { GamePersistenceModule } from './game-persistence/game-persistence.modul
 import { PrismaModule } from './prisma/prisma.module';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
+import { RatingService } from './rating/rating.service';
+import { RatingController } from './rating/rating.controller';
+import { RatingModule } from './rating/rating.module';
 
 @Module({
   imports: [
@@ -19,7 +22,9 @@ import { AuthModule } from './auth/auth.module';
       envFilePath: '.env',
     }),
     AuthModule,
+    RatingModule,
   ],
-  providers: [MatchmakingService, GamePersistenceService],
+  providers: [MatchmakingService, GamePersistenceService, RatingService],
+  controllers: [RatingController],
 })
 export class AppModule {}

@@ -69,7 +69,7 @@ export class AuthService {
 
     const accessToken = await this.jwt.signAsync(
       { sub: userId },
-      { secret: process.env.JWT_ACCESS_SECRET!, expiresIn: '1m' },
+      { secret: process.env.JWT_ACCESS_SECRET!, expiresIn: '10m' },
     );
 
     const refreshToken = randomUUID();

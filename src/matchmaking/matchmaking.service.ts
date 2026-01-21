@@ -4,34 +4,94 @@ import { randomUUID } from 'crypto';
 import { createGame } from '../game/game.store';
 import { GamePersistenceService } from '../game-persistence/game-persistence.service';
 import { playerGameMap } from 'src/game/player-map';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 type QueuedPlayer = {
   socket: Socket;
   userId: string;
+  rating: number;
+  joinedAt?: number;
 };
+
+const QUEUE_TIMEOUT_MS = 60000;
+const TOLERANCE = 100;
 
 @Injectable()
 export class MatchmakingService {
-  constructor(private readonly gamePersistence: GamePersistenceService) {}
+  constructor(
+    private readonly gamePersistence: GamePersistenceService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   private queue: QueuedPlayer[] = [];
 
   async addPlayer(socket: Socket) {
     const { userId } = socket.data as { userId?: string };
     if (!userId) return;
-    // If someone is already waiting → match
+
+    // prevent duplicates
     if (this.queue.find((p) => p.userId === userId)) return;
 
-    if (this.queue.length > 0) {
-      const opponent = this.queue.shift()!;
-      await this.createGame(opponent, { socket, userId });
+    // get player rating
+    const playerRating = await this.getRating(userId);
+    const joinedAt = Date.now();
+
+    // remove timed-out players first
+    this.clearTimeouts();
+
+    // search for compatible opponent
+    const idx = this.queue.findIndex((p) => {
+      return (
+        p.socket.id !== socket.id &&
+        Math.abs(playerRating - p.rating) <= TOLERANCE
+      );
+    });
+
+    if (idx >= 0) {
+      const opponent = this.queue.splice(idx, 1)[0];
+      await this.createGame(opponent, { socket, userId, rating: playerRating });
     } else {
-      this.queue.push({ socket, userId });
+      if (this.queue.find((p) => p.userId === userId)) return;
+      this.queue.push({ socket, userId, rating: playerRating, joinedAt });
     }
+
+    // schedule removal
+    setTimeout(() => {
+      this.removeIfStillQueued(socket);
+    }, QUEUE_TIMEOUT_MS);
+
+    socket.on('cancel_match', () => {
+      this.queue = this.queue.filter((p) => p.socket.id !== socket.id);
+      socket.emit('match_canceled');
+    });
   }
 
   removePlayer(socketId: string) {
     this.queue = this.queue.filter((p) => p.socket.id !== socketId);
+  }
+
+  private async getRating(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    return user?.rating ?? 1200;
+  }
+
+  private clearTimeouts() {
+    const now = Date.now();
+    this.queue = this.queue.filter((p) => {
+      const expired = now - p.joinedAt! > QUEUE_TIMEOUT_MS;
+      if (expired) {
+        p.socket.emit('match_timeout');
+      }
+      return !expired;
+    });
+  }
+
+  private removeIfStillQueued(socket: Socket) {
+    const idx = this.queue.findIndex((p) => p.socket.id === socket.id);
+    if (idx !== -1) {
+      this.queue.splice(idx, 1);
+      socket.emit('match_timeout');
+    }
   }
 
   private async createGame(p1: QueuedPlayer, p2: QueuedPlayer) {

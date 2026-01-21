@@ -14,6 +14,7 @@ import { GameResult } from 'generated/prisma/client';
 import { getGameStatus } from 'src/chess/getGameStatus';
 import { playerGameMap } from './player-map';
 import { JwtService } from '@nestjs/jwt';
+import { RatingService } from 'src/rating/rating.service';
 
 //Omit helping to remove data property from Socket io and then replacing it with mine
 type ExtendedSocket = Omit<Socket, 'data'> & {
@@ -32,6 +33,7 @@ export class GameGateway {
   constructor(
     private readonly matchmaking: MatchmakingService,
     private readonly gamePersistence: GamePersistenceService,
+    private readonly ratingService: RatingService,
     private readonly jwt: JwtService,
   ) {}
 
@@ -49,7 +51,7 @@ export class GameGateway {
         return socket.disconnect();
       }
 
-      const payload = this.jwt.verify<{ sub: string; email: string }>(token, {
+      const payload = this.jwt.verify<{ sub: string }>(token, {
         secret: process.env.JWT_WS_SECRET!,
       });
       socket.data.userId = payload.sub;
@@ -266,12 +268,17 @@ export class GameGateway {
         data.gameId,
         status.winner === 'white' ? GameResult.WHITE_WIN : GameResult.BLACK_WIN,
       );
+      await this.ratingService.updateRatings(
+        data.gameId,
+        status.winner === 'white' ? 'white' : 'black',
+      );
       playerGameMap.delete(userId);
       games.delete(data.gameId);
     }
 
     if (status.state === 'stalemate') {
       await this.gamePersistence.endGame(data.gameId, GameResult.DRAW);
+      await this.ratingService.updateRatings(data.gameId, 'draw');
       playerGameMap.delete(userId);
       games.delete(data.gameId);
     }
@@ -284,6 +291,11 @@ export class GameGateway {
     await this.gamePersistence.endGame(
       gameId,
       winner === 'white' ? 'WHITE_WIN' : 'BLACK_WIN',
+    );
+
+    await this.ratingService.updateRatings(
+      gameId,
+      winner === 'white' ? 'white' : 'black',
     );
 
     const game = getGame(gameId);
