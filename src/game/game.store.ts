@@ -20,6 +20,7 @@ export function createGame(
     },
     lastTimestamp: Date.now(),
     increment: incrementMs,
+    promotionPending: null,
   });
 }
 

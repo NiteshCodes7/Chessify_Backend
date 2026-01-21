@@ -14,4 +14,9 @@ export type GameState = {
   };
   lastTimestamp: number;
   increment: number;
+  promotionPending: null | {
+    row: number;
+    col: number;
+    color: 'white' | 'black';
+  };
 };

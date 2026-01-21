@@ -15,6 +15,7 @@ import { getGameStatus } from 'src/chess/getGameStatus';
 import { playerGameMap } from './player-map';
 import { JwtService } from '@nestjs/jwt';
 import { RatingService } from 'src/rating/rating.service';
+import { BoardState } from 'src/types/chess';
 
 //Omit helping to remove data property from Socket io and then replacing it with mine
 type ExtendedSocket = Omit<Socket, 'data'> & {
@@ -108,6 +109,7 @@ export class GameGateway {
       turn: game.turn,
       time: game.time,
       lastTimestamp: game.lastTimestamp,
+      promotionPending: game.promotionPending ?? null,
     });
   }
 
@@ -136,6 +138,65 @@ export class GameGateway {
       turn: game.turn,
       time: game.time,
       lastTimestamp: game.lastTimestamp,
+      promotionPending: game.promotionPending ?? null,
+    });
+  }
+
+  @SubscribeMessage('promote')
+  handlePromotion(
+    @MessageBody()
+    data: {
+      gameId: string;
+      position: { row: number; col: number };
+      pieceType: 'queen' | 'rook' | 'bishop' | 'knight';
+      newBoard: BoardState;
+    },
+  ) {
+    const { gameId, position, pieceType, newBoard } = data;
+    const game = getGame(gameId);
+    if (!game) return;
+
+    const { row, col } = position;
+
+    const pawn = game.board[row][col];
+    if (!pawn || pawn.type !== 'pawn') return;
+
+    const now = Date.now();
+    const elapsed = now - game.lastTimestamp;
+
+    if (game.turn === 'white') {
+      game.time.white -= elapsed;
+      if (game.time.white <= 0) {
+        return this.endOnTimeout(data.gameId, 'black');
+      }
+      game.time.white += game.increment;
+    } else {
+      game.time.black -= elapsed;
+      if (game.time.black <= 0) {
+        return this.endOnTimeout(data.gameId, 'white');
+      }
+      game.time.black += game.increment;
+    }
+
+    game.turn = game.turn === 'white' ? 'black' : 'white';
+    game.lastTimestamp = now;
+    game.promotionPending = null;
+
+    const status = getGameStatus(newBoard, game.turn);
+
+    game.board[row][col] = {
+      type: pieceType,
+      color: pawn.color,
+      hasMoved: true,
+    };
+
+    this.server.to(gameId).emit('authoritative_move', {
+      board: game.board,
+      turn: game.turn,
+      time: game.time,
+      lastTimestamp: game.lastTimestamp,
+      promotionPending: game.promotionPending,
+      status,
     });
   }
 
@@ -191,6 +252,38 @@ export class GameGateway {
     // ✅ Apply move
     const newBoard = board.map((r) => r.slice());
 
+    // Pawn promotion detection
+    if (
+      piece.type === 'pawn' &&
+      ((piece.color === 'white' && data.to.row === 0) ||
+        (piece.color === 'black' && data.to.row === 7))
+    ) {
+      newBoard[data.to.row][data.to.col] = { ...piece, hasMoved: true };
+      newBoard[data.from.row][data.from.col] = null;
+
+      game.board = newBoard;
+      game.moveCount++;
+
+      this.server.to(data.gameId).emit('authoritative_move', {
+        from: data.from,
+        to: data.to,
+        board: newBoard,
+        turn: game.turn,
+        promotionPending: game.promotionPending,
+        time: game.time,
+        lastTimestamp: game.lastTimestamp,
+        status: 'promotion',
+      });
+
+      this.server.to(data.gameId).emit('promotion_needed', {
+        gameId: data.gameId,
+        color: piece.color,
+        position: { row: data.to.row, col: data.to.col },
+      });
+
+      return;
+    }
+
     // Castling
     if (piece.type === 'king' && Math.abs(data.from.col - data.to.col) === 2) {
       const rookFromCol = data.to.col === 6 ? 7 : 0;
@@ -245,6 +338,8 @@ export class GameGateway {
       to: data.to,
       board: newBoard,
       turn: nextTurn,
+      time: game.time,
+      lastTimestamp: game.lastTimestamp,
       status,
     });
 
@@ -279,8 +374,8 @@ export class GameGateway {
     if (status.state === 'stalemate') {
       await this.gamePersistence.endGame(data.gameId, GameResult.DRAW);
       await this.ratingService.updateRatings(data.gameId, 'draw');
-      playerGameMap.delete(userId);
-      games.delete(data.gameId);
+      playerGameMap.delete(game.players.white);
+      playerGameMap.delete(game.players.black);
     }
   }
 
