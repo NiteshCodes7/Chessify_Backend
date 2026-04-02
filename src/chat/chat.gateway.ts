@@ -57,7 +57,16 @@ export class ChatGateway {
     @MessageBody() data: { to: string; content: string },
   ) {
     const from = socket.data.userId;
-    if (!from || !data.to || !data.content) return;
+
+    if (!from) {
+      console.log('❌ No userId in socket');
+      return;
+    }
+
+    if (!data.to || !data.content) {
+      console.log('❌ Invalid payload', data);
+      return;
+    }
 
     const msg = await this.chatService.saveDM(from, data.to, data.content);
 
@@ -69,7 +78,6 @@ export class ChatGateway {
       createdAt: msg.createdAt,
     };
 
-    // ✅ emit to BOTH users
     this.server.to(`user:${from}`).emit('dm', payload);
     this.server.to(`user:${data.to}`).emit('dm', payload);
   }

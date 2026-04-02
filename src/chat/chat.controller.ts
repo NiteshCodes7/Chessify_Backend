@@ -15,12 +15,7 @@ export class ChatController {
 
   @Get(':friendId')
   async getDM(@Req() req: ChatControl, @Param('friendId') friendId: string) {
-    console.log('USER:', req.user.userId);
-    console.log('FRIEND:', friendId);
-
     const data = await this.chatService.getDM(req.user.userId, friendId);
-    console.log('DB RESULT:', data);
-
     return data;
   }
 }
