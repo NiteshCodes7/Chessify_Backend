@@ -16,13 +16,8 @@ import { playerGameMap } from './player-map';
 import { JwtService } from '@nestjs/jwt';
 import { RatingService } from 'src/rating/rating.service';
 import { BoardState } from 'src/types/chess';
-
-//Omit helping to remove data property from Socket io and then replacing it with mine
-type ExtendedSocket = Omit<Socket, 'data'> & {
-  data: {
-    userId?: string;
-  };
-};
+import { PresenceService } from 'src/presence/presence.service';
+import type { ExtendedSocket } from 'src/types/chess';
 
 @WebSocketGateway({
   cors: {
@@ -36,13 +31,14 @@ export class GameGateway {
     private readonly gamePersistence: GamePersistenceService,
     private readonly ratingService: RatingService,
     private readonly jwt: JwtService,
+    private readonly presence: PresenceService,
   ) {}
 
   @WebSocketServer()
   server: Server;
 
   // 🧠 When a client connects
-  handleConnection(socket: ExtendedSocket) {
+  async handleConnection(socket: ExtendedSocket) {
     const auth = socket.handshake?.auth as { wsToken?: unknown } | undefined;
     const token = typeof auth?.wsToken === 'string' ? auth.wsToken : undefined;
 
@@ -55,8 +51,16 @@ export class GameGateway {
       const payload = this.jwt.verify<{ sub: string }>(token, {
         secret: process.env.JWT_WS_SECRET!,
       });
-      socket.data.userId = payload.sub;
-      console.log(`WS connected: user=${payload.sub}`);
+
+      const userId = payload.sub;
+
+      socket.data.userId = userId;
+
+      await socket.join(`user:${userId}`);
+
+      await this.presence.setStatus(userId, 'online');
+
+      console.log(`WS connected: user=${userId}`);
     } catch (e) {
       console.log('WS auth failed', e);
       socket.emit('ws_unauthorized', { reason: 'invalid_or_expired' });
@@ -65,7 +69,16 @@ export class GameGateway {
   }
 
   // 🧠 When a client disconnects
-  handleDisconnect(socket: Socket) {
+  handleDisconnect(socket: ExtendedSocket) {
+    const userId = socket.data.userId;
+    if (!userId) return;
+
+    // grace period for refresh
+    setTimeout(() => {
+      this.presence.setStatus(userId, 'offline').catch(() => {
+        console.error('Failed to set offline status');
+      });
+    }, 10000);
     this.matchmaking.removePlayer(socket.id);
     console.log('Client disconnected:', socket.id);
   }
@@ -80,10 +93,13 @@ export class GameGateway {
   @SubscribeMessage('join_game')
   async handleJoinGame(
     @MessageBody() gameId: string,
-    @ConnectedSocket() socket: Socket,
+    @ConnectedSocket() socket: ExtendedSocket,
   ) {
     await socket.join(gameId);
     console.log(`Socket ${socket.id} joined game ${gameId}`);
+    const userId = socket.data.userId;
+    await socket.join(gameId);
+    if (userId) await this.presence.setStatus(userId, 'playing');
   }
 
   // 🔗 Reconnect user if refreshed or connection lost

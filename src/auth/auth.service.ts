@@ -72,19 +72,24 @@ export class AuthService {
       { secret: process.env.JWT_ACCESS_SECRET!, expiresIn: '10m' },
     );
 
-    const refreshToken = randomUUID();
-    const tokenHash = await bcrypt.hash(refreshToken, 10);
+    const tokenId = randomUUID();
+    const rawToken = randomUUID();
+    const fullToken = `${tokenId}.${rawToken}`;
+
+    const tokenHash = await bcrypt.hash(rawToken, 10);
+
     const wsToken = await this.createWsToken(userId);
 
     await this.prisma.refreshToken.create({
       data: {
+        id: tokenId,
         userId,
         tokenHash,
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       },
     });
 
-    return { accessToken, refreshToken, wsToken };
+    return { accessToken, refreshToken: fullToken, wsToken };
   }
 
   // Create WS Token
@@ -100,23 +105,48 @@ export class AuthService {
 
   // REFRESH TOKENS
   async refreshTokens(refreshToken: string) {
-    const tokens = await this.prisma.refreshToken.findMany();
-    const match = tokens.find((rt) =>
-      bcrypt.compareSync(refreshToken, rt.tokenHash),
-    );
-    if (!match) throw new UnauthorizedException('Invalid refresh token');
+    const [tokenId, rawToken] = refreshToken.split('.');
 
-    return this.issueTokens(match.userId);
+    if (!tokenId || !rawToken) {
+      throw new UnauthorizedException('Invalid refresh token format');
+    }
+
+    const record = await this.prisma.refreshToken.findUnique({
+      where: { id: tokenId },
+    });
+
+    if (!record) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    if (record.expiresAt < new Date()) {
+      await this.prisma.refreshToken.delete({ where: { id: tokenId } });
+      throw new UnauthorizedException('Refresh token expired');
+    }
+
+    const isValid = await bcrypt.compare(rawToken, record.tokenHash);
+    if (!isValid) {
+      // token reuse detected
+      await this.prisma.refreshToken.deleteMany({
+        where: { userId: record.userId },
+      });
+
+      throw new UnauthorizedException('Token reuse detected');
+    }
+
+    return this.issueTokens(record.userId);
   }
 
   // LOGOUT
   async logout(refreshToken: string) {
-    const tokens = await this.prisma.refreshToken.findMany();
-    const match = tokens.find((rt) =>
-      bcrypt.compareSync(refreshToken, rt.tokenHash),
-    );
-    if (!match) return;
+    const [tokenId] = refreshToken.split('.');
 
-    await this.prisma.refreshToken.delete({ where: { id: match.id } });
+    if (!tokenId) return;
+
+    await this.prisma.refreshToken
+      .delete({
+        where: { id: tokenId },
+      })
+      .catch(() => {});
   }
 }

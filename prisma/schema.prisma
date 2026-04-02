@@ -32,6 +32,12 @@ model User {
   rating    Int      @default(1200)
 
   RefreshTokens RefreshToken[]
+
+  sentRequests     FriendRequest[] @relation("FromUser")
+  receivedRequests FriendRequest[] @relation("ToUser")
+  friendships      Friendship[]    @relation("UserFriends")
+  friendOf         Friendship[]    @relation("FriendUsers")
+  messages         Message[]       @relation("UserMessages")
 }
 
 model RefreshToken {
@@ -40,7 +46,10 @@ model RefreshToken {
   userId    String
   user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
-  expiresAt DateTime @default(dbgenerated("NOW() + INTERVAL '7 days'"))
+  expiresAt DateTime
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model Game {
@@ -70,6 +79,44 @@ model Move {
   toCol     Int
 
   game      Game   @relation(fields: [gameId], references: [id])
+}
+
+model FriendRequest {
+  id        String   @id @default(uuid())
+  fromId    String
+  toId      String
+  status    FriendRequestStatus @default(PENDING)
+  createdAt DateTime @default(now())
+
+  from      User     @relation("FromUser", fields: [fromId], references: [id])
+  to        User     @relation("ToUser", fields: [toId], references: [id])
+}
+
+enum FriendRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+model Friendship {
+  id        String   @id @default(uuid())
+  userId    String
+  friendId  String
+  createdAt DateTime @default(now())
+
+  user      User     @relation("UserFriends", fields: [userId], references: [id])
+  friend    User     @relation("FriendUsers", fields: [friendId], references: [id])
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  senderId  String
+  receiverId String?
+  gameId    String?
+  content   String
+  createdAt DateTime @default(now())
+
+  sender    User     @relation("UserMessages", fields: [senderId], references: [id])
 }
 
 enum GameResult {

@@ -7,6 +7,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { AuthModule } from 'src/auth/auth.module';
 import { RatingModule } from 'src/rating/rating.module';
 import { RatingService } from 'src/rating/rating.service';
+import { PresenceModule } from 'src/presence/presence.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { RatingService } from 'src/rating/rating.service';
     MatchmakingModule,
     GamePersistenceModule,
     RatingModule,
+    PresenceModule,
   ],
   providers: [GameGateway, RatingService],
   controllers: [GameController],

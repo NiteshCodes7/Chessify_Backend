@@ -83,6 +83,10 @@ export class AuthController {
 
   @Post('refresh')
   async refresh(@Req() req: Request, @Res() res: Response) {
+    if (req.headers['x-requested-with'] !== 'XMLHttpRequest') {
+      throw new UnauthorizedException('Invalid request');
+    }
+
     const token = req.cookies.refreshToken;
     if (!token) throw new UnauthorizedException('No refresh cookie');
 

@@ -1,3 +1,5 @@
+import { Socket } from 'socket.io';
+
 export type PieceType =
   | 'pawn'
   | 'rook'
@@ -17,3 +19,10 @@ export type Piece = {
 export type Square = Piece | null;
 
 export type BoardState = Square[][];
+
+//Omit helping to remove data property from Socket io and then replacing it with mine
+export type ExtendedSocket = Omit<Socket, 'data'> & {
+  data: {
+    userId?: string;
+  };
+};

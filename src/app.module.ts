@@ -10,6 +10,11 @@ import { AuthModule } from './auth/auth.module';
 import { RatingService } from './rating/rating.service';
 import { RatingController } from './rating/rating.controller';
 import { RatingModule } from './rating/rating.module';
+import { PresenceModule } from './presence/presence.module';
+import { FriendsService } from './friends/friends.service';
+import { FriendsModule } from './friends/friends.module';
+import { ChatService } from './chat/chat.service';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
   imports: [
@@ -23,8 +28,17 @@ import { RatingModule } from './rating/rating.module';
     }),
     AuthModule,
     RatingModule,
+    PresenceModule,
+    FriendsModule,
+    ChatModule,
   ],
-  providers: [MatchmakingService, GamePersistenceService, RatingService],
+  providers: [
+    MatchmakingService,
+    GamePersistenceService,
+    RatingService,
+    FriendsService,
+    ChatService,
+  ],
   controllers: [RatingController],
 })
 export class AppModule {}
