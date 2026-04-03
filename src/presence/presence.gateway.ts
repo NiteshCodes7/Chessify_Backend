@@ -10,11 +10,13 @@ import { PresenceService } from './presence.service';
 import { FriendsService } from 'src/friends/friends.service';
 
 @WebSocketGateway({
-  namespace: '/',
+  namespace: '/presence',
   cors: { origin: 'http://localhost:3000', credentials: true },
 })
 export class PresenceGateway {
   @WebSocketServer() server!: Server;
+
+  private disconnectTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(
     private readonly jwt: JwtService,
@@ -39,10 +41,20 @@ export class PresenceGateway {
       const userId = payload.sub;
       socket.data.userId = userId;
 
+      // Cancel any pending disconnect timer for this user
       await socket.join(`user:${userId}`);
 
+      // Cancel timer first
+      const existingTimer = this.disconnectTimers.get(userId);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+        this.disconnectTimers.delete(userId);
+      }
+
+      // Set online FIRST
       await this.presence.setStatus(userId, 'online');
 
+      // THEN notify friends — this must happen before any snapshot is sent
       await this.emitToFriends(userId, 'presence_update', {
         userId,
         status: 'online',
@@ -63,8 +75,9 @@ export class PresenceGateway {
     console.log(`[presence] disconnected: ${userId}`);
 
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
-    setTimeout(async () => {
-      // Check if user has any remaining sockets in the presence namespace
+    const timer = setTimeout(async () => {
+      this.disconnectTimers.delete(userId);
+
       const roomSockets = await this.server.in(`user:${userId}`).fetchSockets();
 
       if (roomSockets.length === 0) {
@@ -76,9 +89,45 @@ export class PresenceGateway {
             userId,
             status: 'offline',
           });
+          console.log(`[presence] set offline: ${userId}`);
         }
       }
     }, 5000);
+
+    this.disconnectTimers.set(userId, timer);
+  }
+
+  @SubscribeMessage('get_friends_with_presence')
+  async handleGetFriends(socket: ExtendedSocket) {
+    const userId = socket.data.userId;
+    if (!userId) return;
+
+    const friends = await this.friends.listFriends(userId);
+
+    const result = await Promise.all(
+      friends.map(async (f) => {
+        const roomSockets = await this.server.in(`user:${f.id}`).fetchSockets();
+
+        const isConnected = roomSockets.length > 0;
+        const s = await this.presence.getStatus(f.id);
+
+        return {
+          id: f.id,
+          name: f.name,
+          avatar: f.avatar,
+          rating: f.rating,
+          status: isConnected
+            ? s.status === 'playing'
+              ? 'playing'
+              : 'online'
+            : ('offline' as const),
+          lastSeen: s.lastSeen ? Number(s.lastSeen) : null,
+        };
+      }),
+    );
+
+    console.log(`[get_friends_with_presence] for ${userId}:`, result);
+    socket.emit('friends_with_presence', result);
   }
 
   @SubscribeMessage('request_presence_snapshot')
@@ -93,15 +142,33 @@ export class PresenceGateway {
 
     const snapshot = await Promise.all(
       friends.map(async (f) => {
-        const s = await this.presence.getStatus(f.id);
-        return { userId: f.id, status: s.status };
+        // Check actual socket room instead of Redis
+        const roomSockets = await this.server.in(`user:${f.id}`).fetchSockets();
+
+        const isConnected = roomSockets.length > 0;
+
+        if (isConnected) {
+          // They're connected — get their status from Redis (could be playing)
+          const s = await this.presence.getStatus(f.id);
+          return {
+            userId: f.id,
+            status: s.status === 'playing' ? 'playing' : 'online',
+          };
+        } else {
+          return { userId: f.id, status: 'offline' as const };
+        }
       }),
     );
 
+    console.log(`[snapshot] for ${userId}:`, snapshot);
     socket.emit('presence_snapshot', snapshot);
   }
 
-  async emitToFriends(userId: string, event: string, payload: any) {
+  async emitToFriends(
+    userId: string,
+    event: string,
+    payload: Record<string, unknown>,
+  ) {
     const friends = await this.friends.listFriends(userId);
     this.server.to(friends.map((f) => `user:${f.id}`)).emit(event, payload);
   }
