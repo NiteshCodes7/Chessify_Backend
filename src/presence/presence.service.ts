@@ -11,17 +11,22 @@ export class PresenceService {
 
   async setStatus(userId: string, status: 'online' | 'playing' | 'offline') {
     try {
-      await this.redis.hSet(`presence:${userId}`, {
-        status,
-        lastSeen: Date.now().toString(),
-      });
+      const data: { status: string; lastSeen?: string } = { status };
+      if (status === 'offline') {
+        data.lastSeen = Date.now().toString();
+      }
+      await this.redis.hSet(`presence:${userId}`, data);
     } catch (err) {
       console.error('Redis error:', err);
     }
   }
 
   async getStatus(userId: string) {
-    return this.redis.hGetAll(`presence:${userId}`);
+    const data = await this.redis.hGetAll(`presence:${userId}`);
+    return {
+      status: (data.status as 'online' | 'playing' | 'offline') || 'offline',
+      lastSeen: data.lastSeen || null,
+    };
   }
 
   async isUserOnline(userId: string) {

@@ -31,6 +31,11 @@ export class FriendsController {
     return this.friendsService.acceptRequest(id, req.user.userId);
   }
 
+  @Post('reject/:id')
+  reject(@Req() req: AuthRequest, @Param('id') id: string) {
+    return this.friendsService.rejectRequest(id, req.user.userId);
+  }
+
   @Get('requests')
   getPending(@Req() req: AuthRequest) {
     return this.friendsService.getPendingRequests(req.user.userId);

@@ -20,12 +20,12 @@ import { PresenceService } from 'src/presence/presence.service';
 import type { ExtendedSocket } from 'src/types/chess';
 
 @WebSocketGateway({
-  cors: {
-    origin: 'http://localhost:3000',
-    credentials: true,
-  },
+  namespace: '/game',
+  cors: { origin: 'http://localhost:3000', credentials: true },
 })
 export class GameGateway {
+  @WebSocketServer() server!: Server;
+
   constructor(
     private readonly matchmaking: MatchmakingService,
     private readonly gamePersistence: GamePersistenceService,
@@ -34,82 +34,62 @@ export class GameGateway {
     private readonly presence: PresenceService,
   ) {}
 
-  @WebSocketServer()
-  server: Server;
-
-  // 🧠 When a client connects
   async handleConnection(socket: ExtendedSocket) {
     const auth = socket.handshake?.auth as { wsToken?: unknown } | undefined;
     const token = typeof auth?.wsToken === 'string' ? auth.wsToken : undefined;
 
     try {
-      if (!token) {
-        socket.emit('ws_unauthorized', { reason: 'missing_ws_token' });
-        return socket.disconnect();
-      }
+      if (!token) return socket.disconnect();
 
       const payload = this.jwt.verify<{ sub: string }>(token, {
         secret: process.env.JWT_WS_SECRET!,
       });
 
-      const userId = payload.sub;
+      socket.data.userId = payload.sub;
+      await socket.join(`user:${payload.sub}`);
 
-      socket.data.userId = userId;
-
-      await socket.join(`user:${userId}`);
-
-      await this.presence.setStatus(userId, 'online');
-
-      console.log(`WS connected: user=${userId}`);
-    } catch (e) {
-      console.log('WS auth failed', e);
-      socket.emit('ws_unauthorized', { reason: 'invalid_or_expired' });
+      console.log(`[game] connected: ${payload.sub}`);
+    } catch {
       socket.disconnect();
     }
   }
 
-  // 🧠 When a client disconnects
   handleDisconnect(socket: ExtendedSocket) {
     const userId = socket.data.userId;
     if (!userId) return;
-
-    // grace period for refresh
-    setTimeout(() => {
-      this.presence.setStatus(userId, 'offline').catch(() => {
-        console.error('Failed to set offline status');
-      });
-    }, 10000);
     this.matchmaking.removePlayer(socket.id);
-    console.log('Client disconnected:', socket.id);
+    console.log(`[game] disconnected: ${socket.id}`);
   }
 
-  // ➕ add player to join the game
   @SubscribeMessage('find_match')
   async handleFindMatch(@ConnectedSocket() socket: Socket) {
     await this.matchmaking.addPlayer(socket);
   }
 
-  // 🏠 Join a game room
   @SubscribeMessage('join_game')
   async handleJoinGame(
     @MessageBody() gameId: string,
     @ConnectedSocket() socket: ExtendedSocket,
   ) {
     await socket.join(gameId);
-    console.log(`Socket ${socket.id} joined game ${gameId}`);
     const userId = socket.data.userId;
-    await socket.join(gameId);
-    if (userId) await this.presence.setStatus(userId, 'playing');
+
+    if (userId) {
+      await this.presence.setStatus(userId, 'playing');
+      // Emit to presence namespace so friends see the update
+      this.server.to(`user:${userId}`).emit('presence_update', {
+        userId,
+        status: 'playing',
+      });
+    }
   }
 
-  // 🔗 Reconnect user if refreshed or connection lost
   @SubscribeMessage('reconnect')
   async handleReconnect(@ConnectedSocket() socket: ExtendedSocket) {
     const userId = socket.data.userId;
     if (!userId) return;
 
     const data = playerGameMap.get(userId);
-
     if (!data) return socket.emit('no_active_game');
 
     const { gameId, color } = data;
@@ -129,7 +109,6 @@ export class GameGateway {
     });
   }
 
-  // 👓 Spectators connection
   @SubscribeMessage('spectate')
   async handleSpectate(
     @MessageBody() gameId: string,
@@ -148,7 +127,6 @@ export class GameGateway {
 
     await socket.join(gameId);
 
-    // Send current state immediately
     socket.emit('state_update', {
       board: game.board,
       turn: game.turn,
@@ -173,7 +151,6 @@ export class GameGateway {
     if (!game) return;
 
     const { row, col } = position;
-
     const pawn = game.board[row][col];
     if (!pawn || pawn.type !== 'pawn') return;
 
@@ -182,15 +159,11 @@ export class GameGateway {
 
     if (game.turn === 'white') {
       game.time.white -= elapsed;
-      if (game.time.white <= 0) {
-        return this.endOnTimeout(data.gameId, 'black');
-      }
+      if (game.time.white <= 0) return this.endOnTimeout(gameId, 'black');
       game.time.white += game.increment;
     } else {
       game.time.black -= elapsed;
-      if (game.time.black <= 0) {
-        return this.endOnTimeout(data.gameId, 'white');
-      }
+      if (game.time.black <= 0) return this.endOnTimeout(gameId, 'white');
       game.time.black += game.increment;
     }
 
@@ -216,7 +189,6 @@ export class GameGateway {
     });
   }
 
-  // ♟️ Relay move to opponent
   @SubscribeMessage('move')
   async handleMove(
     @ConnectedSocket() socket: ExtendedSocket,
@@ -233,25 +205,20 @@ export class GameGateway {
     const userId = socket.data.userId;
     if (!userId) return;
 
-    // Enforce turn ownership
     const isWhiteTurn = game.turn === 'white';
     const isBlackTurn = game.turn === 'black';
 
-    if (isWhiteTurn && userId !== game.players.white) {
+    if (isWhiteTurn && userId !== game.players.white)
       return socket.emit('move_denied', { reason: 'Not your turn (white)' });
-    }
 
-    if (isBlackTurn && userId !== game.players.black) {
+    if (isBlackTurn && userId !== game.players.black)
       return socket.emit('move_denied', { reason: 'Not your turn (black)' });
-    }
 
     const { board, turn } = game;
     const piece = board[data.from.row][data.from.col];
 
-    // ❌ Invalid piece
     if (!piece || piece.color !== turn) return;
 
-    // ❌ Illegal move
     if (
       !isMoveLegal(
         board,
@@ -261,14 +228,11 @@ export class GameGateway {
         data.to.col,
         turn,
       )
-    ) {
+    )
       return;
-    }
 
-    // ✅ Apply move
     const newBoard = board.map((r) => r.slice());
 
-    // Pawn promotion detection
     if (
       piece.type === 'pawn' &&
       ((piece.color === 'white' && data.to.row === 0) ||
@@ -276,7 +240,6 @@ export class GameGateway {
     ) {
       newBoard[data.to.row][data.to.col] = { ...piece, hasMoved: true };
       newBoard[data.from.row][data.from.col] = null;
-
       game.board = newBoard;
       game.moveCount++;
 
@@ -300,44 +263,29 @@ export class GameGateway {
       return;
     }
 
-    // Castling
     if (piece.type === 'king' && Math.abs(data.from.col - data.to.col) === 2) {
       const rookFromCol = data.to.col === 6 ? 7 : 0;
       const rookToCol = data.to.col === 6 ? 5 : 3;
-
       const rook = newBoard[data.from.row][rookFromCol];
       if (!rook) return;
-
-      newBoard[data.from.row][rookToCol] = {
-        ...rook,
-        hasMoved: true,
-      };
+      newBoard[data.from.row][rookToCol] = { ...rook, hasMoved: true };
       newBoard[data.from.row][rookFromCol] = null;
     }
 
-    newBoard[data.to.row][data.to.col] = {
-      ...piece,
-      hasMoved: true,
-    };
+    newBoard[data.to.row][data.to.col] = { ...piece, hasMoved: true };
     newBoard[data.from.row][data.from.col] = null;
 
     const nextTurn = turn === 'white' ? 'black' : 'white';
-
-    // 🕛 Timeout logic
     const now = Date.now();
     const elapsed = now - game.lastTimestamp;
 
     if (game.turn === 'white') {
       game.time.white -= elapsed;
-      if (game.time.white <= 0) {
-        return this.endOnTimeout(data.gameId, 'black');
-      }
+      if (game.time.white <= 0) return this.endOnTimeout(data.gameId, 'black');
       game.time.white += game.increment;
     } else {
       game.time.black -= elapsed;
-      if (game.time.black <= 0) {
-        return this.endOnTimeout(data.gameId, 'white');
-      }
+      if (game.time.black <= 0) return this.endOnTimeout(data.gameId, 'white');
       game.time.black += game.increment;
     }
 
@@ -348,7 +296,6 @@ export class GameGateway {
 
     const status = getGameStatus(newBoard, nextTurn);
 
-    // 🔔 Broadcast authoritative move
     this.server.to(data.gameId).emit('authoritative_move', {
       from: data.from,
       to: data.to,
@@ -373,50 +320,59 @@ export class GameGateway {
       data.to,
     );
 
-    // 🛑 End game ONLY for terminal states
     if (status.state === 'checkmate') {
-      await this.gamePersistence.endGame(
+      await this.endGame(
         data.gameId,
         status.winner === 'white' ? GameResult.WHITE_WIN : GameResult.BLACK_WIN,
-      );
-      await this.ratingService.updateRatings(
-        data.gameId,
         status.winner === 'white' ? 'white' : 'black',
+        game.players,
       );
-      playerGameMap.delete(userId);
-      games.delete(data.gameId);
     }
 
     if (status.state === 'stalemate') {
-      await this.gamePersistence.endGame(data.gameId, GameResult.DRAW);
-      await this.ratingService.updateRatings(data.gameId, 'draw');
-      playerGameMap.delete(game.players.white);
-      playerGameMap.delete(game.players.black);
+      await this.endGame(data.gameId, GameResult.DRAW, 'draw', game.players);
     }
   }
 
-  // 🕛 Update winner in database
+  private async endGame(
+    gameId: string,
+    result: GameResult,
+    winner: 'white' | 'black' | 'draw',
+    players: { white: string; black: string },
+  ) {
+    await this.gamePersistence.endGame(gameId, result);
+    await this.ratingService.updateRatings(gameId, winner);
+
+    playerGameMap.delete(players.white);
+    playerGameMap.delete(players.black);
+
+    await this.presence.setStatus(players.white, 'online');
+    await this.presence.setStatus(players.black, 'online');
+
+    // Emit to presence namespace rooms
+    this.server
+      .to(`user:${players.white}`)
+      .emit('presence_update', { userId: players.white, status: 'online' });
+    this.server
+      .to(`user:${players.black}`)
+      .emit('presence_update', { userId: players.black, status: 'online' });
+
+    games.delete(gameId);
+  }
+
   private async endOnTimeout(gameId: string, winner: 'white' | 'black') {
     this.server.to(gameId).emit('timeout', { winner });
 
-    await this.gamePersistence.endGame(
-      gameId,
-      winner === 'white' ? 'WHITE_WIN' : 'BLACK_WIN',
-    );
-
-    await this.ratingService.updateRatings(
-      gameId,
-      winner === 'white' ? 'white' : 'black',
-    );
-
     const game = getGame(gameId);
-    if (game) {
-      playerGameMap.delete(game.players.white);
-      playerGameMap.delete(game.players.black);
-    }
+    if (!game) return;
 
-    games.delete(gameId);
+    await this.endGame(
+      gameId,
+      winner === 'white' ? GameResult.WHITE_WIN : GameResult.BLACK_WIN,
+      winner,
+      game.players,
+    );
 
-    console.log(`Game ${gameId} ended on time. Winner: ${winner}`);
+    console.log(`[game] ${gameId} ended on timeout. Winner: ${winner}`);
   }
 }

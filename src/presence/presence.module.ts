@@ -1,8 +1,12 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { PresenceService } from './presence.service';
+import { PresenceGateway } from './presence.gateway';
+import { AuthModule } from 'src/auth/auth.module';
+import { FriendsModule } from 'src/friends/friends.module';
 
 @Module({
-  providers: [PresenceService],
+  imports: [AuthModule, forwardRef(() => FriendsModule)],
+  providers: [PresenceService, PresenceGateway],
   exports: [PresenceService],
 })
 export class PresenceModule {}
