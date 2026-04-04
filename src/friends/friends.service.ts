@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FriendRequestStatus } from 'generated/prisma/client';
 import { PresenceService } from 'src/presence/presence.service';
@@ -7,7 +12,8 @@ import { PresenceService } from 'src/presence/presence.service';
 export class FriendsService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly presenceService: PresenceService,
+    @Inject(forwardRef(() => PresenceService))
+    private readonly presenceserv: PresenceService,
   ) {}
 
   async sendRequest(fromId: string, toId: string) {
@@ -73,15 +79,14 @@ export class FriendsService {
 
     return Promise.all(
       friendships.map(async (f) => {
-        const presence = await this.presenceService.getStatus(f.friendId);
+        const presence = await this.presenceserv.getStatus(f.friendId);
 
         return {
           id: f.friend.id,
           name: f.friend.name,
           avatar: f.friend.avatar,
           rating: f.friend.rating,
-          status:
-            (presence.status as 'online' | 'playing' | 'offline') || 'offline',
+          status: presence.status || 'offline',
           lastSeen: presence.lastSeen ? Number(presence.lastSeen) : null,
         };
       }),

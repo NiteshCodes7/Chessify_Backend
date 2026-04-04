@@ -7,6 +7,6 @@ import { FriendsModule } from 'src/friends/friends.module';
 @Module({
   imports: [AuthModule, forwardRef(() => FriendsModule)],
   providers: [PresenceService, PresenceGateway],
-  exports: [PresenceService],
+  exports: [PresenceGateway, PresenceService],
 })
 export class PresenceModule {}

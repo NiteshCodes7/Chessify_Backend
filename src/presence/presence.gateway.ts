@@ -142,13 +142,11 @@ export class PresenceGateway {
 
     const snapshot = await Promise.all(
       friends.map(async (f) => {
-        // Check actual socket room instead of Redis
         const roomSockets = await this.server.in(`user:${f.id}`).fetchSockets();
 
         const isConnected = roomSockets.length > 0;
 
         if (isConnected) {
-          // They're connected — get their status from Redis (could be playing)
           const s = await this.presence.getStatus(f.id);
           return {
             userId: f.id,

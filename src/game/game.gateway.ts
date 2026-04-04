@@ -91,7 +91,6 @@ export class GameGateway {
     await socket.join(gameId);
     console.log(`Socket ${socket.id} joined game ${gameId}`);
     const userId = socket.data.userId;
-    await socket.join(gameId);
     if (userId) {
       await this.presence.setStatus(userId, 'playing');
 

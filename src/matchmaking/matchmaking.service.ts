@@ -25,14 +25,18 @@ export class MatchmakingService {
 
   private queue: QueuedPlayer[] = [];
 
+  // Add Players
   async addPlayer(socket: Socket) {
     const { userId } = socket.data as { userId?: string };
-    if (!userId) return;
+    if (!userId) {
+      return;
+    }
 
-    // prevent duplicates
-    if (this.queue.find((p) => p.userId === userId)) return;
+    // Same player joining twice
+    if (this.queue.find((p) => p.userId === userId)) {
+      return;
+    }
 
-    // get player rating
     const playerRating = await this.getRating(userId);
     const joinedAt = Date.now();
 
@@ -60,6 +64,7 @@ export class MatchmakingService {
       this.removeIfStillQueued(socket);
     }, QUEUE_TIMEOUT_MS);
 
+    socket.removeAllListeners('cancel_match');
     socket.on('cancel_match', () => {
       this.queue = this.queue.filter((p) => p.socket.id !== socket.id);
       socket.emit('match_canceled');
