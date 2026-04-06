@@ -5,6 +5,7 @@ import { createGame } from '../game/game.store';
 import { GamePersistenceService } from '../game-persistence/game-persistence.service';
 import { playerGameMap } from 'src/game/player-map';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { PresenceService } from 'src/presence/presence.service';
 
 type QueuedPlayer = {
   socket: Socket;
@@ -20,6 +21,7 @@ const TOLERANCE = 100;
 export class MatchmakingService {
   constructor(
     private readonly gamePersistence: GamePersistenceService,
+    private readonly presenceService: PresenceService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -34,6 +36,16 @@ export class MatchmakingService {
 
     // Same player joining twice
     if (this.queue.find((p) => p.userId === userId)) {
+      return;
+    }
+
+    // check if there ban n userId
+    const banRemaining = await this.presenceService.getBan(userId);
+    if (banRemaining) {
+      socket.emit('banned', {
+        reason: 'You abandoned a game',
+        remainingMs: banRemaining,
+      });
       return;
     }
 
@@ -143,5 +155,42 @@ export class MatchmakingService {
     await this.gamePersistence.createGame(gameId, white.userId, black.userId);
 
     console.log(`Game ${gameId} created`);
+  }
+
+  async createDirectMatch(whiteId: string, blackId: string) {
+    const gameId = randomUUID();
+
+    const timeMs = 5 * 60 * 1000;
+    const incrementMs = 0;
+
+    createGame(
+      gameId,
+      {
+        white: blackId,
+        black: whiteId,
+      },
+      timeMs,
+      incrementMs,
+    );
+
+    if (playerGameMap.has(whiteId) || playerGameMap.has(blackId)) {
+      return;
+    }
+
+    playerGameMap.set(whiteId, { gameId, color: 'white' });
+    playerGameMap.set(blackId, { gameId, color: 'black' });
+
+    await this.gamePersistence.createGame(gameId, whiteId, blackId);
+
+    return {
+      gameId,
+      players: {
+        white: whiteId,
+        black: blackId,
+      },
+      timeMs,
+      incrementMs,
+      lastTimestamp: Date.now(),
+    };
   }
 }

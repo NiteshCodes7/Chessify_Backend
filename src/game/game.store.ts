@@ -27,3 +27,9 @@ export function createGame(
 export function getGame(gameId: string) {
   return games.get(gameId);
 }
+
+//game for rematch
+export const rematchRequests = new Map<
+  string,
+  { from: string; to: string; timeout?: NodeJS.Timeout; requested?: boolean }
+>();

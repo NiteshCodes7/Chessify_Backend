@@ -7,7 +7,9 @@ export function simulateMove(
   toRow: number,
   toCol: number,
 ): BoardState {
-  const newBoard = board.map((row) => row.slice());
+  const newBoard = board.map((row) =>
+    row.map((cell) => (cell ? { ...cell } : null)),
+  );
 
   newBoard[toRow][toCol] = newBoard[fromRow][fromCol];
   newBoard[fromRow][fromCol] = null;

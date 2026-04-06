@@ -33,4 +33,18 @@ export class PresenceService {
     const data = await this.redis.hGet(`presence:${userId}`, 'status');
     return data === 'online' || data === 'playing';
   }
+
+  async setBan(userId: string, durationMs: number) {
+    const expiresAt = Date.now() + durationMs;
+    await this.redis.set(`ban:${userId}`, expiresAt.toString(), {
+      PX: durationMs, // auto-expire in Redis
+    });
+  }
+
+  async getBan(userId: string): Promise<number | null> {
+    const expiresAt = await this.redis.get(`ban:${userId}`);
+    if (!expiresAt) return null;
+    const remaining = Number(expiresAt) - Date.now();
+    return remaining > 0 ? remaining : null;
+  }
 }

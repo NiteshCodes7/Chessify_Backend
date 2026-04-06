@@ -8,7 +8,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { MatchmakingService } from '../matchmaking/matchmaking.service';
 import { isMoveLegal } from '../chess/isMoveLegal';
-import { games, getGame } from './game.store';
+import { games, getGame, rematchRequests } from './game.store';
 import { GamePersistenceService } from '../game-persistence/game-persistence.service';
 import { GameResult } from 'generated/prisma/client';
 import { getGameStatus } from 'src/chess/getGameStatus';
@@ -39,6 +39,8 @@ export class GameGateway {
   @WebSocketServer()
   server!: Server;
 
+  private abandonTimers = new Map<string, NodeJS.Timeout>();
+
   // 🧠 When a client connects
   async handleConnection(socket: ExtendedSocket) {
     const auth = socket.handshake?.auth as { wsToken?: unknown } | undefined;
@@ -60,6 +62,36 @@ export class GameGateway {
 
       await socket.join(`user:${userId}`);
 
+      // Cancel abandon timer if they reconnect
+      const existingTimer = this.abandonTimers.get(userId);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+        this.abandonTimers.delete(userId);
+        console.log(`[game] ${userId} reconnected, cancelled abandon timer`);
+
+        // Notify opponent they're back
+        const gameData = playerGameMap.get(userId);
+        if (gameData) {
+          const game = getGame(gameData.gameId);
+          if (game) {
+            const opponentId =
+              game.players.white === userId
+                ? game.players.black
+                : game.players.white;
+            this.server.to(`user:${opponentId}`).emit('opponent_reconnected');
+          }
+        }
+      }
+
+      // Check if user has an active ban
+      const banRemaining = await this.presence.getBan(userId);
+      if (banRemaining) {
+        socket.emit('banned', {
+          reason: 'You abandoned a game',
+          remainingMs: banRemaining,
+        });
+      }
+
       console.log(`WS connected: user=${userId}`);
     } catch (e) {
       console.log('WS auth failed', e);
@@ -72,8 +104,42 @@ export class GameGateway {
   handleDisconnect(socket: ExtendedSocket) {
     const userId = socket.data.userId;
     if (!userId) return;
+
     this.matchmaking.removePlayer(socket.id);
-    console.log('Client disconnected:', socket.id);
+
+    // Check if user is in an active game
+    const gameData = playerGameMap.get(userId);
+    if (!gameData) return;
+
+    const game = getGame(gameData.gameId);
+    if (!game) return;
+
+    console.log(
+      `[game] ${userId} disconnected during game ${gameData.gameId}, starting abandon timer`,
+    );
+
+    // Notify opponent
+    const opponentId =
+      game.players.white === userId ? game.players.black : game.players.white;
+
+    this.server.to(`user:${opponentId}`).emit('opponent_disconnected');
+
+    // Start 30s abandon timer
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
+    const timer = setTimeout(async () => {
+      this.abandonTimers.delete(userId);
+
+      // Check if still disconnected
+      const roomSockets = await this.server.in(`user:${userId}`).fetchSockets();
+      if (roomSockets.length > 0) return; // reconnected, ignore
+
+      console.log(`[game] ${userId} abandoned game ${gameData.gameId}`);
+
+      const winner = game.players.white === userId ? 'black' : 'white';
+      await this.finalizeGame(gameData.gameId, 'abandoned', winner);
+    }, 30000);
+
+    this.abandonTimers.set(userId, timer);
   }
 
   // ➕ add player to join the game
@@ -88,6 +154,11 @@ export class GameGateway {
     @MessageBody() gameId: string,
     @ConnectedSocket() socket: ExtendedSocket,
   ) {
+    const game = getGame(gameId);
+    if (!game) {
+      socket.emit('no_active_game');
+      return;
+    }
     await socket.join(gameId);
     console.log(`Socket ${socket.id} joined game ${gameId}`);
     const userId = socket.data.userId;
@@ -99,6 +170,100 @@ export class GameGateway {
         status: 'playing',
       });
     }
+  }
+
+  @SubscribeMessage('rematch_request')
+  handleRematchRequest(
+    @ConnectedSocket() socket: ExtendedSocket,
+    @MessageBody() { gameId }: { gameId: string },
+  ) {
+    const userId = socket.data.userId;
+    if (!userId) return;
+
+    const request = rematchRequests.get(gameId);
+    if (!request) return;
+
+    // Prevent duplicate requests
+    if (request.requested) return;
+    request.requested = true;
+
+    // Figure out who the opponent is
+    const opponentId = request.from === userId ? request.to : request.from;
+
+    // Start timeout
+    const timeout = setTimeout(() => {
+      this.server.to(`user:${userId}`).emit('rematch_timeout');
+      this.server.to(`user:${opponentId}`).emit('rematch_expired');
+      rematchRequests.delete(gameId);
+    }, 10000);
+
+    request.timeout = timeout;
+    rematchRequests.set(gameId, request);
+
+    // Notify opponent immediately
+    this.server.to(`user:${opponentId}`).emit('rematch_offer', {
+      gameId,
+      from: userId,
+    });
+
+    // Notify sender they're waiting
+    this.server.to(`user:${userId}`).emit('rematch_waiting');
+  }
+
+  @SubscribeMessage('rematch_response')
+  async handleRematchResponse(
+    @ConnectedSocket() socket: ExtendedSocket,
+    @MessageBody() data: { gameId: string; accept: boolean },
+  ) {
+    const userId = socket.data.userId;
+    if (!userId) return;
+
+    const request = rematchRequests.get(data.gameId);
+    if (!request) return;
+
+    if (request.timeout) clearTimeout(request.timeout);
+
+    // Figure out who requested and who is responding
+    const requesterId = request.from === userId ? request.to : request.from;
+
+    // Only the non-requester can respond
+    // But since we now use requested flag, just check they're not the same
+    if (requesterId === userId) return;
+
+    if (!data.accept) {
+      this.server.to(`user:${requesterId}`).emit('rematch_rejected');
+      rematchRequests.delete(data.gameId);
+      return;
+    }
+
+    rematchRequests.delete(data.gameId);
+
+    const newGame = await this.matchmaking.createDirectMatch(
+      request.from,
+      request.to,
+    );
+
+    if (!newGame) {
+      this.server.to(`user:${request.from}`).emit('rematch_failed');
+      this.server.to(`user:${request.to}`).emit('rematch_failed');
+      return;
+    }
+
+    this.server.to(`user:${request.from}`).emit('match_found', {
+      gameId: newGame.gameId,
+      color: newGame.players.white === request.from ? 'white' : 'black',
+      timeMs: newGame.timeMs,
+      incrementMs: newGame.incrementMs,
+      lastTimestamp: newGame.lastTimestamp,
+    });
+
+    this.server.to(`user:${request.to}`).emit('match_found', {
+      gameId: newGame.gameId,
+      color: newGame.players.white === request.to ? 'white' : 'black',
+      timeMs: newGame.timeMs,
+      incrementMs: newGame.incrementMs,
+      lastTimestamp: newGame.lastTimestamp,
+    });
   }
 
   // 🔗 Reconnect user if refreshed or connection lost
@@ -198,6 +363,14 @@ export class GameGateway {
     game.promotionPending = null;
 
     const status = getGameStatus(newBoard, game.turn);
+
+    if (status.state === 'checkmate') {
+      return this.finalizeGame(gameId, 'checkmate', status.winner);
+    }
+
+    if (status.state === 'stalemate') {
+      return this.finalizeGame(gameId, 'stalemate', null);
+    }
 
     game.board[row][col] = {
       type: pieceType,
@@ -374,43 +547,47 @@ export class GameGateway {
 
     // 🛑 End game ONLY for terminal states
     if (status.state === 'checkmate') {
-      await this.gamePersistence.endGame(
-        data.gameId,
-        status.winner === 'white' ? GameResult.WHITE_WIN : GameResult.BLACK_WIN,
-      );
-      await this.ratingService.updateRatings(
-        data.gameId,
-        status.winner === 'white' ? 'white' : 'black',
-      );
-      playerGameMap.delete(userId);
-      games.delete(data.gameId);
-
-      await this.presence.setStatus(game.players.white, 'online');
-      await this.presence.setStatus(game.players.black, 'online');
-
-      await this.presenceGateway.emitToFriends(
-        game.players.white,
-        'presence_update',
-        {
-          userId: game.players.white,
-          status: 'online',
-        },
-      );
-      await this.presenceGateway.emitToFriends(
-        game.players.black,
-        'presence_update',
-        {
-          userId: game.players.black,
-          status: 'online',
-        },
-      );
+      return this.finalizeGame(data.gameId, 'checkmate', status.winner);
     }
 
     if (status.state === 'stalemate') {
-      await this.gamePersistence.endGame(data.gameId, GameResult.DRAW);
-      await this.ratingService.updateRatings(data.gameId, 'draw');
+      return this.finalizeGame(data.gameId, 'stalemate', null);
+    }
+  }
+
+  private async finalizeGame(
+    gameId: string,
+    state: 'checkmate' | 'stalemate' | 'timeout' | 'abandoned',
+    winner: 'white' | 'black' | null,
+  ) {
+    this.server.to(gameId).emit('game_over', { state, winner });
+
+    let result: GameResult;
+    if (state === 'stalemate') result = GameResult.DRAW;
+    else
+      result = winner === 'white' ? GameResult.WHITE_WIN : GameResult.BLACK_WIN;
+
+    await this.gamePersistence.endGame(gameId, result);
+
+    if (state !== 'stalemate') {
+      await this.ratingService.updateRatings(gameId, winner!);
+    } else {
+      await this.ratingService.updateRatings(gameId, 'draw');
+    }
+
+    const game = getGame(gameId);
+    if (game) {
+      // Apply ban to abandoner
+      if (state === 'abandoned' && winner) {
+        const abandonerId =
+          winner === 'white' ? game.players.black : game.players.white;
+        const BAN_DURATION = 2 * 60 * 1000; // 2 minutes
+        await this.presence.setBan(abandonerId, BAN_DURATION);
+        console.log(`[game] banned ${abandonerId} for ${BAN_DURATION / 1000}s`);
+      }
       playerGameMap.delete(game.players.white);
       playerGameMap.delete(game.players.black);
+
       await this.presence.setStatus(game.players.white, 'online');
       await this.presence.setStatus(game.players.black, 'online');
 
@@ -430,50 +607,20 @@ export class GameGateway {
           status: 'online',
         },
       );
+
+      if (state !== 'abandoned') {
+        rematchRequests.set(gameId, {
+          from: game.players.white,
+          to: game.players.black,
+        });
+      }
     }
+
+    games.delete(gameId);
   }
 
   // 🕛 Update winner in database
   private async endOnTimeout(gameId: string, winner: 'white' | 'black') {
-    this.server.to(gameId).emit('timeout', { winner });
-
-    await this.gamePersistence.endGame(
-      gameId,
-      winner === 'white' ? 'WHITE_WIN' : 'BLACK_WIN',
-    );
-
-    await this.ratingService.updateRatings(
-      gameId,
-      winner === 'white' ? 'white' : 'black',
-    );
-
-    const game = getGame(gameId);
-    if (game) {
-      playerGameMap.delete(game.players.white);
-      playerGameMap.delete(game.players.black);
-      await this.presence.setStatus(game.players.white, 'online');
-      await this.presence.setStatus(game.players.black, 'online');
-
-      await this.presenceGateway.emitToFriends(
-        game.players.white,
-        'presence_update',
-        {
-          userId: game.players.white,
-          status: 'online',
-        },
-      );
-      await this.presenceGateway.emitToFriends(
-        game.players.black,
-        'presence_update',
-        {
-          userId: game.players.black,
-          status: 'online',
-        },
-      );
-    }
-
-    games.delete(gameId);
-
-    console.log(`Game ${gameId} ended on time. Winner: ${winner}`);
+    await this.finalizeGame(gameId, 'timeout', winner);
   }
 }
