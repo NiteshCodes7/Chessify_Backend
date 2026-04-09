@@ -19,9 +19,9 @@ export class AuthService {
   ) {}
 
   // REGISTER
-  async register(email: string, password: string, name?: string) {
-    const exists = await this.prisma.user.findUnique({ where: { email } });
-    if (exists) throw new BadRequestException('Email in use');
+  async register(email: string, password: string, name: string) {
+    const emailExists = await this.prisma.user.findUnique({ where: { email } });
+    if (emailExists) throw new BadRequestException('Email already in use');
 
     const hash = await bcrypt.hash(password, 10);
 
@@ -32,7 +32,28 @@ export class AuthService {
     return this.issueTokens(user.id);
   }
 
-  //LOGIN
+  // set usernaame
+  async setUsername(userId: string, username: string) {
+    // validate format
+    if (!/^[a-z0-9_]{3,20}$/.test(username)) {
+      throw new BadRequestException('Invalid username format');
+    }
+
+    const exists = await this.prisma.user.findUnique({
+      where: { username },
+    });
+
+    if (exists) {
+      throw new BadRequestException('Username already taken');
+    }
+
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { username },
+    });
+  }
+
+  // LOGIN
   async validateUser(email: string, password: string) {
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user || !user.password)
@@ -50,11 +71,24 @@ export class AuthService {
     let user = await this.prisma.user.findUnique({ where: { email } });
 
     if (!user) {
+      // Derive a unique username from the Google display name
+      const base = profile.displayName
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, '_')
+        .slice(0, 20);
+
+      let username = base;
+      let suffix = 1;
+      while (await this.prisma.user.findUnique({ where: { username } })) {
+        username = `${base}_${suffix++}`;
+      }
+
       user = await this.prisma.user.create({
         data: {
           email,
           googleId: profile.id,
           name: profile.displayName,
+          username,
           avatar: profile.photos[0].value,
         },
       });
@@ -92,7 +126,7 @@ export class AuthService {
     return { accessToken, refreshToken: fullToken, wsToken };
   }
 
-  // Create WS Token
+  // CREATE WS TOKEN
   async createWsToken(userId: string) {
     return await this.jwt.signAsync(
       { sub: userId },
@@ -126,11 +160,10 @@ export class AuthService {
 
     const isValid = await bcrypt.compare(rawToken, record.tokenHash);
     if (!isValid) {
-      // token reuse detected
+      // Token reuse detected — revoke all sessions
       await this.prisma.refreshToken.deleteMany({
         where: { userId: record.userId },
       });
-
       throw new UnauthorizedException('Token reuse detected');
     }
 
@@ -140,13 +173,10 @@ export class AuthService {
   // LOGOUT
   async logout(refreshToken: string) {
     const [tokenId] = refreshToken.split('.');
-
     if (!tokenId) return;
 
     await this.prisma.refreshToken
-      .delete({
-        where: { id: tokenId },
-      })
+      .delete({ where: { id: tokenId } })
       .catch(() => {});
   }
 }

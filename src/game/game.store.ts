@@ -31,5 +31,11 @@ export function getGame(gameId: string) {
 //game for rematch
 export const rematchRequests = new Map<
   string,
-  { from: string; to: string; timeout?: NodeJS.Timeout; requested?: boolean }
+  {
+    from: string;
+    to: string;
+    timeout?: NodeJS.Timeout;
+    requested?: boolean;
+    flipped: boolean;
+  }
 >();

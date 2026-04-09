@@ -15,7 +15,7 @@ type QueuedPlayer = {
 };
 
 const QUEUE_TIMEOUT_MS = 60000;
-const TOLERANCE = 100;
+const TOLERANCE = 500;
 
 @Injectable()
 export class MatchmakingService {
@@ -166,8 +166,8 @@ export class MatchmakingService {
     createGame(
       gameId,
       {
-        white: blackId,
-        black: whiteId,
+        white: whiteId,
+        black: blackId,
       },
       timeMs,
       incrementMs,

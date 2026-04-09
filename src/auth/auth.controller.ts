@@ -17,6 +17,25 @@ import { getGoogleProfile } from './google';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AccessGuard } from './guards/access.guard';
 
+type RegisterBody = {
+  email: string;
+  password: string;
+  name: string;
+};
+
+type LoginBody = {
+  email: string;
+  password: string;
+};
+
+const REFRESH_COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: 'lax' as const,
+  secure: false,
+  path: '/',
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+};
+
 @Controller('auth')
 export class AuthController {
   constructor(
@@ -24,6 +43,7 @@ export class AuthController {
     private readonly prisma: PrismaService,
   ) {}
 
+  // ✅ GET CURRENT USER
   @UseGuards(AccessGuard)
   @Get('me')
   async me(@Req() req) {
@@ -35,6 +55,7 @@ export class AuthController {
         id: true,
         email: true,
         name: true,
+        username: true,
         avatar: true,
         rating: true,
         createdAt: true,
@@ -44,43 +65,42 @@ export class AuthController {
     return user;
   }
 
+  // ✅ REGISTER
   @Post('register')
-  async register(@Body() body, @Res() res: Response) {
+  async register(@Body() body: RegisterBody, @Res() res: Response) {
     const { accessToken, refreshToken, wsToken } = await this.auth.register(
       body.email,
       body.password,
       body.name,
     );
 
-    res.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: false,
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-
+    res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
     return res.send({ accessToken, wsToken });
   }
 
+  // ✅ LOGIN
   @Post('login')
-  async login(@Body() body, @Res() res: Response) {
+  async login(@Body() body: LoginBody, @Res() res: Response) {
     const user = await this.auth.validateUser(body.email, body.password);
+
     const { accessToken, refreshToken, wsToken } = await this.auth.issueTokens(
       user.id,
     );
 
-    res.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
-      sameSite: 'lax', // for Production if having same domain can set lax or strict
-      secure: false,
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-
+    res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
     return res.send({ accessToken, wsToken });
   }
 
+  // ✅ SET USERNAME
+  @UseGuards(AccessGuard)
+  @Post('set-username')
+  async setUsername(@Req() req, @Body('username') username: string) {
+    const { userId } = req.user;
+
+    return this.auth.setUsername(userId as string, username);
+  }
+
+  // ✅ REFRESH TOKEN
   @Post('refresh')
   async refresh(@Req() req: Request, @Res() res: Response) {
     if (req.headers['x-requested-with'] !== 'XMLHttpRequest') {
@@ -91,23 +111,18 @@ export class AuthController {
     if (!token) throw new UnauthorizedException('No refresh cookie');
 
     const { accessToken, refreshToken, wsToken } =
-      await this.auth.refreshTokens(token);
+      await this.auth.refreshTokens(token as string);
 
-    res.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: false,
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-
+    res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
     return res.send({ accessToken, wsToken });
   }
 
+  // ✅ LOGOUT
   @Post('logout')
   async logout(@Req() req: Request, @Res() res: Response) {
     const token = req.cookies.refreshToken;
-    await this.auth.logout(token);
+    await this.auth.logout(token as string);
+
     res.clearCookie('refreshToken');
     return res.send({ ok: true });
   }
@@ -117,6 +132,7 @@ export class AuthController {
   @Get('google')
   googleLogin() {
     const redirect = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${process.env.GOOGLE_CLIENT_ID}&redirect_uri=${process.env.GOOGLE_CALLBACK_URL}&response_type=code&scope=profile email`;
+
     return { redirect };
   }
 
@@ -124,18 +140,19 @@ export class AuthController {
   async googleCallback(@Query('code') code: string, @Res() res: Response) {
     const profile = await getGoogleProfile(code);
 
-    const { accessToken, refreshToken } = await this.auth.googleLogin(profile);
+    const { accessToken, refreshToken, wsToken } =
+      await this.auth.googleLogin(profile);
 
-    res.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: false,
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
 
     return res.send(
-      `<script>window.opener.postMessage({accessToken: "${accessToken}"}, "*"); window.close();</script>`,
+      `<script>
+        window.opener.postMessage(
+          { accessToken: "${accessToken}", wsToken: "${wsToken}" },
+          "*"
+        );
+        window.close();
+      </script>`,
     );
   }
 }

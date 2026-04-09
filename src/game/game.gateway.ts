@@ -40,6 +40,7 @@ export class GameGateway {
   server!: Server;
 
   private abandonTimers = new Map<string, NodeJS.Timeout>();
+  private clockTimers = new Map<string, NodeJS.Timeout>();
 
   // 🧠 When a client connects
   async handleConnection(socket: ExtendedSocket) {
@@ -67,13 +68,26 @@ export class GameGateway {
       if (existingTimer) {
         clearTimeout(existingTimer);
         this.abandonTimers.delete(userId);
-        console.log(`[game] ${userId} reconnected, cancelled abandon timer`);
 
-        // Notify opponent they're back
         const gameData = playerGameMap.get(userId);
         if (gameData) {
           const game = getGame(gameData.gameId);
           if (game) {
+            // Rejoin the game room
+            await socket.join(gameData.gameId);
+
+            // Send current game state back to returning player
+            socket.emit('reconnected', {
+              gameId: gameData.gameId,
+              color: gameData.color,
+              board: game.board,
+              turn: game.turn,
+              time: game.time,
+              lastTimestamp: game.lastTimestamp,
+              promotionPending: game.promotionPending ?? null,
+            });
+
+            // Notify opponent they're back
             const opponentId =
               game.players.white === userId
                 ? game.players.black
@@ -140,6 +154,29 @@ export class GameGateway {
     }, 30000);
 
     this.abandonTimers.set(userId, timer);
+
+    // Clear clock timer — abandon timer takes over
+    const clockTimer = this.clockTimers.get(gameData.gameId);
+    if (clockTimer) {
+      clearTimeout(clockTimer);
+      this.clockTimers.delete(gameData.gameId);
+    }
+  }
+
+  // Opponent for-feit game on his/her will
+  @SubscribeMessage('forfeit')
+  async handleForfeit(
+    @ConnectedSocket() socket: ExtendedSocket,
+    @MessageBody() { gameId }: { gameId: string },
+  ) {
+    const userId = socket.data.userId;
+    if (!userId) return;
+
+    const game = getGame(gameId);
+    if (!game) return;
+
+    const winner = game.players.white === userId ? 'black' : 'white';
+    await this.finalizeGame(gameId, 'abandoned', winner);
   }
 
   // ➕ add player to join the game
@@ -161,6 +198,22 @@ export class GameGateway {
     }
     await socket.join(gameId);
     console.log(`Socket ${socket.id} joined game ${gameId}`);
+
+    // Start clock only when both players have joined
+    const whiteSockets = await this.server
+      .in(`user:${game.players.white}`)
+      .fetchSockets();
+    const blackSockets = await this.server
+      .in(`user:${game.players.black}`)
+      .fetchSockets();
+
+    if (whiteSockets.length > 0 && blackSockets.length > 0) {
+      // Both players present — start white's clock timeout
+      if (!this.clockTimers.has(gameId)) {
+        this.scheduleClockTimeout(gameId);
+      }
+    }
+
     const userId = socket.data.userId;
     if (userId) {
       await this.presence.setStatus(userId, 'playing');
@@ -238,9 +291,13 @@ export class GameGateway {
 
     rematchRequests.delete(data.gameId);
 
+    const [newWhite, newBlack] = request.flipped
+      ? [request.from, request.to]
+      : [request.to, request.from];
+
     const newGame = await this.matchmaking.createDirectMatch(
-      request.from,
-      request.to,
+      newWhite,
+      newBlack,
     );
 
     if (!newGame) {
@@ -388,6 +445,35 @@ export class GameGateway {
     });
   }
 
+  // 🕰️ Timers for players
+  private scheduleClockTimeout(gameId: string) {
+    // Clear any existing timer for this game
+    const existing = this.clockTimers.get(gameId);
+    if (existing) clearTimeout(existing);
+
+    const game = getGame(gameId);
+    if (!game) return;
+
+    // Time remaining for whoever's turn it is
+    const timeRemaining =
+      game.turn === 'white' ? game.time.white : game.time.black;
+
+    const winner = game.turn === 'white' ? 'black' : 'white';
+
+    const timer = setTimeout(() => {
+      this.clockTimers.delete(gameId);
+
+      // Double-check the game still exists and turn hasn't changed
+      const g = getGame(gameId);
+      if (!g) return;
+      if (g.turn !== game.turn) return; // a move came in, timer already rescheduled
+
+      void this.endOnTimeout(gameId, winner);
+    }, timeRemaining);
+
+    this.clockTimers.set(gameId, timer);
+  }
+
   // ♟️ Relay move to opponent
   @SubscribeMessage('move')
   async handleMove(
@@ -500,16 +586,10 @@ export class GameGateway {
     const elapsed = now - game.lastTimestamp;
 
     if (game.turn === 'white') {
-      game.time.white -= elapsed;
-      if (game.time.white <= 0) {
-        return this.endOnTimeout(data.gameId, 'black');
-      }
+      game.time.white = Math.max(0, game.time.white - elapsed);
       game.time.white += game.increment;
     } else {
-      game.time.black -= elapsed;
-      if (game.time.black <= 0) {
-        return this.endOnTimeout(data.gameId, 'white');
-      }
+      game.time.black = Math.max(0, game.time.black - elapsed);
       game.time.black += game.increment;
     }
 
@@ -553,6 +633,8 @@ export class GameGateway {
     if (status.state === 'stalemate') {
       return this.finalizeGame(data.gameId, 'stalemate', null);
     }
+
+    this.scheduleClockTimeout(data.gameId);
   }
 
   private async finalizeGame(
@@ -561,6 +643,12 @@ export class GameGateway {
     winner: 'white' | 'black' | null,
   ) {
     this.server.to(gameId).emit('game_over', { state, winner });
+
+    const clockTimer = this.clockTimers.get(gameId);
+    if (clockTimer) {
+      clearTimeout(clockTimer);
+      this.clockTimers.delete(gameId);
+    }
 
     let result: GameResult;
     if (state === 'stalemate') result = GameResult.DRAW;
@@ -612,6 +700,7 @@ export class GameGateway {
         rematchRequests.set(gameId, {
           from: game.players.white,
           to: game.players.black,
+          flipped: false,
         });
       }
     }
