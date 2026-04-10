@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { GameResult } from 'generated/prisma/client';
+import { GameEndReason, GameResult } from 'generated/prisma/client';
 
 @Injectable()
 export class GamePersistenceService {
@@ -29,11 +29,12 @@ export class GamePersistenceService {
     });
   }
 
-  async endGame(gameId: string, result: GameResult) {
+  async endGame(gameId: string, result: GameResult, endReason: GameEndReason) {
     await this.prisma.game.update({
       where: { id: gameId },
       data: {
         result,
+        endReason,
         endedAt: new Date(),
       },
     });

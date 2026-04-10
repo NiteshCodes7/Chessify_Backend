@@ -15,6 +15,9 @@ import { FriendsService } from './friends/friends.service';
 import { FriendsModule } from './friends/friends.module';
 import { ChatService } from './chat/chat.service';
 import { ChatModule } from './chat/chat.module';
+import { MailModule } from './mail/mail.module';
+import { UsersController } from './users/users.controller';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -31,6 +34,8 @@ import { ChatModule } from './chat/chat.module';
     PresenceModule,
     FriendsModule,
     ChatModule,
+    MailModule,
+    UsersModule,
   ],
   providers: [
     MatchmakingService,
@@ -39,6 +44,6 @@ import { ChatModule } from './chat/chat.module';
     FriendsService,
     ChatService,
   ],
-  controllers: [RatingController],
+  controllers: [RatingController, UsersController],
 })
 export class AppModule {}

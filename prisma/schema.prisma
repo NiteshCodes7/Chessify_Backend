@@ -34,11 +34,24 @@ model User {
 
   RefreshTokens RefreshToken[]
 
+  isVerified  Boolean  @default(false)
+  otps        Otp[]
+
   sentRequests     FriendRequest[] @relation("FromUser")
   receivedRequests FriendRequest[] @relation("ToUser")
   friendships      Friendship[]    @relation("UserFriends")
   friendOf         Friendship[]    @relation("FriendUsers")
   messages         Message[]       @relation("UserMessages")
+}
+
+model Otp {
+  id        String   @id @default(cuid())
+  userId    String
+  codeHash  String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model RefreshToken {
@@ -65,6 +78,8 @@ model Game {
   blackId   String?
 
   result    GameResult @default(ONGOING)
+
+  endReason GameEndReason?
 
   moves     Move[]
 }
@@ -125,4 +140,12 @@ enum GameResult {
   WHITE_WIN
   BLACK_WIN
   DRAW
+}
+
+enum GameEndReason {
+  CHECKMATE
+  STALEMATE
+  TIMEOUT
+  RESIGNATION
+  ABANDONED
 }

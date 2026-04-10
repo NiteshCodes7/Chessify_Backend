@@ -10,7 +10,7 @@ import { MatchmakingService } from '../matchmaking/matchmaking.service';
 import { isMoveLegal } from '../chess/isMoveLegal';
 import { games, getGame, rematchRequests } from './game.store';
 import { GamePersistenceService } from '../game-persistence/game-persistence.service';
-import { GameResult } from 'generated/prisma/client';
+import { GameEndReason, GameResult } from 'generated/prisma/client';
 import { getGameStatus } from 'src/chess/getGameStatus';
 import { playerGameMap } from './player-map';
 import { JwtService } from '@nestjs/jwt';
@@ -176,7 +176,7 @@ export class GameGateway {
     if (!game) return;
 
     const winner = game.players.white === userId ? 'black' : 'white';
-    await this.finalizeGame(gameId, 'abandoned', winner);
+    await this.finalizeGame(gameId, 'resignation', winner);
   }
 
   // ➕ add player to join the game
@@ -639,7 +639,7 @@ export class GameGateway {
 
   private async finalizeGame(
     gameId: string,
-    state: 'checkmate' | 'stalemate' | 'timeout' | 'abandoned',
+    state: 'checkmate' | 'stalemate' | 'timeout' | 'abandoned' | 'resignation',
     winner: 'white' | 'black' | null,
   ) {
     this.server.to(gameId).emit('game_over', { state, winner });
@@ -655,7 +655,43 @@ export class GameGateway {
     else
       result = winner === 'white' ? GameResult.WHITE_WIN : GameResult.BLACK_WIN;
 
-    await this.gamePersistence.endGame(gameId, result);
+    switch (state) {
+      case 'checkmate':
+        await this.gamePersistence.endGame(
+          gameId,
+          result,
+          GameEndReason.CHECKMATE,
+        );
+        break;
+      case 'stalemate':
+        await this.gamePersistence.endGame(
+          gameId,
+          result,
+          GameEndReason.STALEMATE,
+        );
+        break;
+      case 'timeout':
+        await this.gamePersistence.endGame(
+          gameId,
+          result,
+          GameEndReason.TIMEOUT,
+        );
+        break;
+      case 'resignation':
+        await this.gamePersistence.endGame(
+          gameId,
+          result,
+          GameEndReason.RESIGNATION,
+        );
+        break;
+      case 'abandoned':
+        await this.gamePersistence.endGame(
+          gameId,
+          result,
+          GameEndReason.ABANDONED,
+        );
+        break;
+    }
 
     if (state !== 'stalemate') {
       await this.ratingService.updateRatings(gameId, winner!);

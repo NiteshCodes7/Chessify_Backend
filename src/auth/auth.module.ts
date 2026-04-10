@@ -6,9 +6,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { JwtAccessStrategy } from './strategies/jwt-access.strategy';
 import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
+import { MailModule } from 'src/mail/mail.module';
 
 @Module({
-  imports: [JwtModule.register({})],
+  imports: [JwtModule.register({}), MailModule],
   controllers: [AuthController],
   providers: [
     AuthService,
@@ -17,6 +18,6 @@ import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
     JwtAccessStrategy,
     JwtRefreshStrategy,
   ],
-  exports: [JwtModule],
+  exports: [JwtModule, AuthModule, AuthService],
 })
 export class AuthModule {}
