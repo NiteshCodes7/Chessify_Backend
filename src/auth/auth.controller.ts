@@ -19,7 +19,7 @@ import { getGoogleProfile } from './google';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AccessGuard } from './guards/access.guard';
 
-const REFRESH_COOKIE_OPTIONS = {
+const COOKIE_OPTIONS = {
   httpOnly: true,
   sameSite: 'lax' as const,
   secure: false,
@@ -58,14 +58,18 @@ export class AuthController {
   @Post('register')
   @HttpCode(HttpStatus.OK)
   async register(@Body() body) {
-    return this.auth.register(body.email, body.password, body.name);
+    return this.auth.register(
+      body.email as string,
+      body.password as string,
+      body.name as string,
+    );
   }
 
   // SET USERNAME
   @UseGuards(AccessGuard)
   @Post('set-username')
   setUsername(@Req() req, @Body('username') username: string) {
-    return this.auth.setUsername(req.user.userId, username);
+    return this.auth.setUsername(req.user.userId as string, username);
   }
 
   // Check if Username available
@@ -78,11 +82,11 @@ export class AuthController {
   @Post('verify-otp')
   async verifyOtp(@Body() body, @Res() res: Response) {
     const { accessToken, refreshToken, wsToken } = await this.auth.verifyOtp(
-      body.email,
-      body.otp,
+      body.email as string,
+      body.otp as string,
     );
 
-    res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
+    res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
     return res.send({ accessToken, wsToken });
   }
 
@@ -90,20 +94,47 @@ export class AuthController {
   @Post('resend-otp')
   @HttpCode(HttpStatus.OK)
   async resendOtp(@Body() body) {
-    await this.auth.sendOtp(body.email);
+    await this.auth.sendOtp(body.email as string);
     return { message: 'OTP resent' };
   }
 
   // LOGIN
   @Post('login')
   async login(@Body() body, @Res() res: Response) {
-    const user = await this.auth.validateUser(body.email, body.password);
+    const user = await this.auth.validateUser(
+      body.email as string,
+      body.password as string,
+    );
     const { accessToken, refreshToken, wsToken } = await this.auth.issueTokens(
       user.id,
     );
 
-    res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
+    const sessionToken = await this.auth.sessionToken(user.id);
+
+    res.cookie('sessionToken', sessionToken, COOKIE_OPTIONS);
+
+    res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
     return res.send({ accessToken, wsToken });
+  }
+
+  // FORGOT PASSWORD
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(@Body() body) {
+    await this.auth.sendPasswordResetOtp(body.email as string);
+    return { message: 'OTP sent if account exists' };
+  }
+
+  // RESET PASSWORD
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(@Body() body) {
+    await this.auth.resetPassword(
+      body.email as string,
+      body.otp as string,
+      body.newPassword as string,
+    );
+    return { message: 'Password reset successfully' };
   }
 
   // REFRESH
@@ -117,9 +148,9 @@ export class AuthController {
     if (!token) throw new UnauthorizedException('No refresh cookie');
 
     const { accessToken, refreshToken, wsToken } =
-      await this.auth.refreshTokens(token);
+      await this.auth.refreshTokens(token as string);
 
-    res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
+    res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
     return res.send({ accessToken, wsToken });
   }
 
@@ -127,7 +158,7 @@ export class AuthController {
   @Post('logout')
   async logout(@Req() req: Request, @Res() res: Response) {
     const token = req.cookies.refreshToken;
-    await this.auth.logout(token);
+    await this.auth.logout(token as string);
     res.clearCookie('refreshToken');
     return res.send({ ok: true });
   }
@@ -142,11 +173,23 @@ export class AuthController {
   @Get('google/callback')
   async googleCallback(@Query('code') code: string, @Res() res: Response) {
     const profile = await getGoogleProfile(code);
-    const { accessToken, refreshToken } = await this.auth.googleLogin(profile);
 
-    res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
-    return res.send(
-      `<script>window.opener.postMessage({accessToken: "${accessToken}"}, "*"); window.close();</script>`,
-    );
+    const { accessToken, refreshToken, wsToken } =
+      await this.auth.googleLogin(profile);
+
+    res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
+
+    return res.send(`
+    <script>
+      window.opener.postMessage(
+        {
+          accessToken: "${accessToken}",
+          wsToken: "${wsToken}"
+        },
+        "http://localhost:3000"
+      );
+      window.close();
+    </script>
+  `);
   }
 }

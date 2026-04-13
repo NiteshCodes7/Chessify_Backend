@@ -214,6 +214,63 @@ export class AuthService {
     return this.issueTokens(user.id);
   }
 
+  // SEND PASSWORD RESET OTP
+  async sendPasswordResetOtp(email: string) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) return;
+
+    await this.prisma.otp.deleteMany({ where: { userId: user.id } });
+
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const codeHash = await bcrypt.hash(code, 10);
+
+    await this.prisma.otp.create({
+      data: {
+        userId: user.id,
+        codeHash,
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
+
+    await this.mail.sendOtp(email, code);
+  }
+
+  // RESET PASSWORD
+  async resetPassword(email: string, code: string, newPassword: string) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) throw new BadRequestException('No account found');
+
+    const otpRecord = await this.prisma.otp.findFirst({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!otpRecord) throw new BadRequestException('No OTP found');
+
+    if (otpRecord.expiresAt < new Date()) {
+      await this.prisma.otp.delete({ where: { id: otpRecord.id } });
+      throw new BadRequestException('OTP expired');
+    }
+
+    const isValid = await bcrypt.compare(code, otpRecord.codeHash);
+    if (!isValid) throw new BadRequestException('Incorrect OTP');
+
+    if (newPassword.length < 8) {
+      throw new BadRequestException('Password must be at least 8 characters');
+    }
+
+    const hash = await bcrypt.hash(newPassword, 10);
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { password: hash },
+    });
+
+    await this.prisma.otp.delete({ where: { id: otpRecord.id } });
+
+    await this.prisma.refreshToken.deleteMany({ where: { userId: user.id } });
+  }
+
   // LOGIN
   async validateUser(email: string, password: string) {
     const user = await this.prisma.user.findUnique({ where: { email } });
@@ -259,6 +316,16 @@ export class AuthService {
     });
 
     return { accessToken, refreshToken: fullToken, wsToken };
+  }
+
+  // Session Token
+  async sessionToken(userId: string) {
+    const sessionToken = await this.jwt.signAsync(
+      { sub: userId },
+      { secret: process.env.JWT_ACCESS_SECRET!, expiresIn: '7d' },
+    );
+
+    return sessionToken;
   }
 
   // WS TOKEN
@@ -358,34 +425,54 @@ export class AuthService {
 
   // GOOGLE AUTH
   async googleLogin(profile: any) {
-    const email = profile.emails[0].value;
-    let user = await this.prisma.user.findUnique({ where: { email } });
+    const email = profile.emails?.[0]?.value;
 
+    if (!email) {
+      throw new BadRequestException('Google account email not found');
+    }
+
+    let user = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    // New user from Google
     if (!user) {
-      const base = profile.displayName
-        .toLowerCase()
-        .replace(/[^a-z0-9_]/g, '_')
-        .slice(0, 20);
-
-      let username = base;
-      let suffix = 1;
-
-      while (await this.prisma.user.findUnique({ where: { username } })) {
-        username = `${base}_${suffix++}`;
-      }
-
       user = await this.prisma.user.create({
         data: {
           email,
           googleId: profile.id,
-          name: profile.displayName,
-          username,
-          avatar: profile.photos[0].value,
+          name: profile.displayName || '',
+          avatar: profile.photos?.[0]?.value || null,
+          isVerified: true,
+          username: null,
+        },
+      });
+    }
+
+    // Existing user signed up earlier with email/password
+    else if (!user.googleId) {
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          googleId: profile.id,
+          avatar: user.avatar || profile.photos?.[0]?.value || null,
           isVerified: true,
         },
       });
     }
 
-    return this.issueTokens(user.id);
+    const tokens = await this.issueTokens(user.id);
+
+    return {
+      ...tokens,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        username: user.username,
+        avatar: user.avatar,
+      },
+      needsUsername: !user.username,
+    };
   }
 }
