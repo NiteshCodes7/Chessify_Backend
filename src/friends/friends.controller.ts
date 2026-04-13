@@ -7,6 +7,7 @@ import {
   Req,
   UseGuards,
   Query,
+  Delete,
 } from '@nestjs/common';
 import { FriendsService } from './friends.service';
 import { AccessGuard } from 'src/auth/guards/access.guard';
@@ -48,6 +49,11 @@ export class FriendsController {
   @Get('requests')
   getPending(@Req() req: AuthRequest) {
     return this.friendsService.getPendingRequests(req.user.userId);
+  }
+
+  @Delete(':friendId')
+  unfriend(@Req() req: AuthRequest, @Param('friendId') friendId: string) {
+    return this.friendsService.unfriend(req.user.userId, friendId);
   }
 
   @Get()

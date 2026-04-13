@@ -40,6 +40,38 @@ export class GamePersistenceService {
     });
   }
 
+  async getAllGames(userId: string) {
+    return this.prisma.game.findMany({
+      where: {
+        OR: [{ whiteId: userId }, { blackId: userId }],
+      },
+      include: {
+        white: {
+          select: {
+            id: true,
+            username: true,
+            avatar: true,
+          },
+        },
+        black: {
+          select: {
+            id: true,
+            username: true,
+            avatar: true,
+          },
+        },
+        _count: {
+          select: {
+            moves: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
   async getGame(gameId: string) {
     return this.prisma.game.findUnique({
       where: { id: gameId },

@@ -184,4 +184,25 @@ export class FriendsService {
 
     return this.sendRequest(fromId, user.id);
   }
+
+  // unfriend
+  async unfriend(userId: string, friendId: string) {
+    const friendship = await this.prisma.friendship.findFirst({
+      where: { userId, friendId },
+    });
+
+    if (!friendship) throw new BadRequestException('Not friends');
+
+    // Delete both directions
+    await this.prisma.friendship.deleteMany({
+      where: {
+        OR: [
+          { userId, friendId },
+          { userId: friendId, friendId: userId },
+        ],
+      },
+    });
+
+    return { message: 'Unfriended successfully' };
+  }
 }
