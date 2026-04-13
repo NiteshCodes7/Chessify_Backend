@@ -6,6 +6,7 @@ import {
   Param,
   Req,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import { FriendsService } from './friends.service';
 import { AccessGuard } from 'src/auth/guards/access.guard';
@@ -21,9 +22,17 @@ interface AuthRequest extends Request {
 export class FriendsController {
   constructor(private readonly friendsService: FriendsService) {}
 
+  @Get('search')
+  search(@Req() req: AuthRequest, @Query('q') q: string) {
+    return this.friendsService.searchUsers(req.user.userId, q);
+  }
+
   @Post('request')
-  send(@Req() req: AuthRequest, @Body('email') email: string) {
-    return this.friendsService.sendRequestByEmail(req.user.userId, email);
+  send(@Req() req: AuthRequest, @Body('identifier') identifier: string) {
+    return this.friendsService.sendRequestByIdentifier(
+      req.user.userId,
+      identifier,
+    );
   }
 
   @Post('accept/:id')

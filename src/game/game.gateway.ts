@@ -19,6 +19,7 @@ import { BoardState } from 'src/types/chess';
 import { PresenceService } from 'src/presence/presence.service';
 import type { ExtendedSocket } from 'src/types/chess';
 import { PresenceGateway } from 'src/presence/presence.gateway';
+import { randomUUID } from 'node:crypto';
 
 @WebSocketGateway({
   cors: {
@@ -41,6 +42,10 @@ export class GameGateway {
 
   private abandonTimers = new Map<string, NodeJS.Timeout>();
   private clockTimers = new Map<string, NodeJS.Timeout>();
+  private invites = new Map<
+    string,
+    { from: string; to: string; timeout: NodeJS.Timeout }
+  >();
 
   // 🧠 When a client connects
   async handleConnection(socket: ExtendedSocket) {
@@ -225,6 +230,7 @@ export class GameGateway {
     }
   }
 
+  // rematch request
   @SubscribeMessage('rematch_request')
   handleRematchRequest(
     @ConnectedSocket() socket: ExtendedSocket,
@@ -263,6 +269,7 @@ export class GameGateway {
     this.server.to(`user:${userId}`).emit('rematch_waiting');
   }
 
+  // rematch response
   @SubscribeMessage('rematch_response')
   async handleRematchResponse(
     @ConnectedSocket() socket: ExtendedSocket,
@@ -321,6 +328,130 @@ export class GameGateway {
       incrementMs: newGame.incrementMs,
       lastTimestamp: newGame.lastTimestamp,
     });
+  }
+
+  // invite friend
+  @SubscribeMessage('invite_friend')
+  async handleInviteFriend(
+    @ConnectedSocket() socket: ExtendedSocket,
+    @MessageBody() { friendId }: { friendId: string },
+  ) {
+    const userId = socket.data.userId;
+    if (!userId) return;
+
+    // Check if friend is online
+    const presenceSockets = await this.presenceGateway.server
+      .in(`user:${friendId}`)
+      .fetchSockets();
+
+    if (presenceSockets.length === 0) {
+      return socket.emit('invite_failed', { reason: 'Friend is not online' });
+    }
+
+    // Check if friend is already playing
+    const friendStatus = await this.presence.getStatus(friendId);
+    if (friendStatus.status === 'playing') {
+      return socket.emit('invite_failed', {
+        reason: 'Friend is already in a game',
+      });
+    }
+
+    // Check if already invited
+    const existingInvite = [...this.invites.values()].find(
+      (i) => i.from === userId && i.to === friendId,
+    );
+    if (existingInvite) {
+      return socket.emit('invite_failed', { reason: 'Invite already sent' });
+    }
+
+    // Send invite
+    const inviteId = randomUUID();
+    const timeout = setTimeout(() => {
+      this.invites.delete(inviteId);
+      this.server.to(`user:${userId}`).emit('invite_expired', { friendId });
+      this.server
+        .to(`user:${friendId}`)
+        .emit('invite_expired', { friendId: userId });
+    }, 30000);
+
+    this.invites.set(inviteId, { from: userId, to: friendId, timeout });
+
+    this.server.to(`user:${friendId}`).emit('game_invite', {
+      inviteId,
+      from: userId,
+    });
+
+    socket.emit('invite_sent', { inviteId, friendId });
+  }
+
+  // invite friend response
+  @SubscribeMessage('invite_response')
+  async handleInviteResponse(
+    @ConnectedSocket() socket: ExtendedSocket,
+    @MessageBody() { inviteId, accept }: { inviteId: string; accept: boolean },
+  ) {
+    const userId = socket.data.userId;
+    if (!userId) return;
+
+    const invite = this.invites.get(inviteId);
+    if (!invite)
+      return socket.emit('invite_failed', { reason: 'Invite expired' });
+
+    clearTimeout(invite.timeout);
+    this.invites.delete(inviteId);
+
+    if (!accept) {
+      this.server
+        .to(`user:${invite.from}`)
+        .emit('invite_declined', { friendId: userId });
+      return;
+    }
+
+    // Create game
+    const newGame = await this.matchmaking.createDirectMatch(
+      invite.from,
+      invite.to,
+    );
+    if (!newGame) {
+      this.server
+        .to(`user:${invite.from}`)
+        .emit('invite_failed', { reason: 'Failed to create game' });
+      this.server
+        .to(`user:${invite.to}`)
+        .emit('invite_failed', { reason: 'Failed to create game' });
+      return;
+    }
+
+    this.server.to(`user:${invite.from}`).emit('match_found', {
+      gameId: newGame.gameId,
+      color: newGame.players.white === invite.from ? 'white' : 'black',
+      timeMs: newGame.timeMs,
+      incrementMs: newGame.incrementMs,
+      lastTimestamp: newGame.lastTimestamp,
+    });
+
+    this.server.to(`user:${invite.to}`).emit('match_found', {
+      gameId: newGame.gameId,
+      color: newGame.players.white === invite.to ? 'white' : 'black',
+      timeMs: newGame.timeMs,
+      incrementMs: newGame.incrementMs,
+      lastTimestamp: newGame.lastTimestamp,
+    });
+  }
+
+  // cancel invitation
+  @SubscribeMessage('cancel_invite')
+  handleCancelInvite(
+    @ConnectedSocket() socket: ExtendedSocket,
+    @MessageBody() { inviteId }: { inviteId: string },
+  ) {
+    const invite = this.invites.get(inviteId);
+    if (!invite) return;
+    clearTimeout(invite.timeout);
+    this.invites.delete(inviteId);
+    this.server
+      .to(`user:${invite.to}`)
+      .emit('invite_canceled', { friendId: invite.from });
   }
 
   // 🔗 Reconnect user if refreshed or connection lost

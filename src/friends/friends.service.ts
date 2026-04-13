@@ -105,13 +105,54 @@ export class FriendsService {
     });
   }
 
-  async sendRequestByEmail(fromId: string, email: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { email },
+  // searchh users live
+  async searchUsers(userId: string, q: string) {
+    const value = q.trim().toLowerCase();
+
+    if (value.length < 2) return [];
+
+    const users = await this.prisma.user.findMany({
+      where: {
+        id: { not: userId },
+        OR: [
+          { username: { contains: value, mode: 'insensitive' } },
+          { email: { contains: value, mode: 'insensitive' } },
+        ],
+      },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        avatar: true,
+        rating: true,
+      },
+      take: 6,
+    });
+
+    return users;
+  }
+
+  // send friend request
+  async sendRequestByIdentifier(fromId: string, identifier: string) {
+    const value = identifier.toLowerCase().trim();
+
+    // Detect email vs username
+    const isEmail = value.includes('@');
+
+    const user = await this.prisma.user.findFirst({
+      where: isEmail ? { email: value } : { username: value },
     });
 
     if (!user) {
-      throw new BadRequestException('User not found');
+      throw new BadRequestException(
+        isEmail
+          ? 'User not found with this email'
+          : 'User not found with this username',
+      );
+    }
+
+    if (user.id === fromId) {
+      throw new BadRequestException('Cannot add yourself');
     }
 
     const alreadyFriend = await this.prisma.friendship.findFirst({
