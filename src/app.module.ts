@@ -44,6 +44,6 @@ import { UsersModule } from './users/users.module';
     FriendsService,
     ChatService,
   ],
-  controllers: [RatingController, UsersController],
+  controllers: [RatingController, UsersController, AbortController],
 })
 export class AppModule {}
