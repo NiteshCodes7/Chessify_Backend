@@ -2,7 +2,7 @@ import { Body, Controller, Get, Patch, Req, UseGuards } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AccessGuard } from 'src/auth/guards/access.guard';
 import { Request } from 'express';
-import { GameEndReason } from 'generated/prisma/enums';
+import { GameEndReason } from '../../generated/prisma/enums';
 import { AuthService } from 'src/auth/auth.service';
 
 export interface RequestWithUser extends Request {
