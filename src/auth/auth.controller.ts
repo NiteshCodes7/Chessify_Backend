@@ -21,14 +21,11 @@ import { AccessGuard } from './guards/access.guard';
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
-  sameSite:
-    process.env.NODE_ENV === 'production'
-      ? ('none' as const)
-      : ('lax' as const),
-  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'none' as const,
+  secure: true,
   path: '/',
-  maxAge: 7 * 24 * 60 * 60,
-};
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+} as const;
 
 @Controller('auth')
 export class AuthController {
