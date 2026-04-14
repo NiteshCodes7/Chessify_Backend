@@ -1,17 +1,35 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+
+function validateEnv() {
+  const required = [
+    'DATABASE_URL',
+    'REDIS_URL',
+    'JWT_ACCESS_SECRET',
+    'JWT_WS_SECRET',
+    'FRONTEND_URL',
+  ];
+
+  const missing = required.filter((key) => !process.env[key]);
+  if (missing.length > 0) {
+    throw new Error(`Missing env variables: ${missing.join(', ')}`);
+  }
+}
 
 async function bootstrap() {
+  validateEnv();
   const app = await NestFactory.create(AppModule);
   // eslint-disable-next-line @typescript-eslint/no-unsafe-call
   app.use(cookieParser());
+  app.use(helmet());
   app.enableCors({
-    origin: 'http://localhost:3000',
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
     credentials: true,
   });
-  await app.listen(process.env.PORT ?? 3001);
-  console.log(`"Server running on 3001"`);
+  await app.listen(process.env.PORT || 3001);
+  console.log(`Server running on ${process.env.PORT}`);
 }
 bootstrap().catch((err) => {
   console.log('Bootstrap error: ', err);

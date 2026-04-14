@@ -3,7 +3,9 @@ import { createClient } from 'redis';
 
 @Injectable()
 export class PresenceService {
-  private redis = createClient();
+  private redis = createClient({
+    url: process.env.REDIS_URL,
+  });
 
   constructor() {
     this.redis.connect().catch(console.error);

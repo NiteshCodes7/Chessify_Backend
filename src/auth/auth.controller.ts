@@ -21,8 +21,11 @@ import { AccessGuard } from './guards/access.guard';
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
-  sameSite: 'lax' as const,
-  secure: false,
+  sameSite:
+    process.env.NODE_ENV === 'production'
+      ? ('none' as const)
+      : ('lax' as const),
+  secure: process.env.NODE_ENV === 'production',
   path: '/',
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
@@ -186,7 +189,7 @@ export class AuthController {
           accessToken: "${accessToken}",
           wsToken: "${wsToken}"
         },
-        "http://localhost:3000"
+        "${process.env.FRONTEND_URL || 'http://localhost:3000'}"
       );
       window.close();
     </script>

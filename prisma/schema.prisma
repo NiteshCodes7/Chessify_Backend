@@ -1,47 +1,34 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
+}
 
 datasource db {
   provider = "postgresql"
 }
 
-generator client {
-  provider = "prisma-client"
-  output = "../generated/prisma"
-  moduleFormat  = "cjs"
-}
-
 model User {
-  id        String   @id @default(uuid())
-  createdAt DateTime @default(now())
-
-  email     String   @unique
-  username  String? @unique
-  password  String?
-  name      String
-  avatar    String?
-
-  googleId  String?  @unique
-  githubId  String?  @unique
-
-  whiteGames Game[]  @relation("WhitePlayer")
-  blackGames Game[]  @relation("BlackPlayer")
-
-  rating    Int      @default(1200)
-
-  RefreshTokens RefreshToken[]
-
-  isVerified  Boolean  @default(false)
-  otps        Otp[]
-
+  id               String          @id @default(uuid())
+  createdAt        DateTime        @default(now())
+  email            String          @unique
+  username         String?         @unique
+  password         String?
+  name             String
+  avatar           String?
+  googleId         String?         @unique
+  githubId         String?         @unique
+  rating           Int             @default(1200)
+  isVerified       Boolean         @default(false)
   sentRequests     FriendRequest[] @relation("FromUser")
   receivedRequests FriendRequest[] @relation("ToUser")
-  friendships      Friendship[]    @relation("UserFriends")
   friendOf         Friendship[]    @relation("FriendUsers")
+  friendships      Friendship[]    @relation("UserFriends")
+  blackGames       Game[]          @relation("BlackPlayer")
+  whiteGames       Game[]          @relation("WhitePlayer")
   messages         Message[]       @relation("UserMessages")
+  otps             Otp[]
+  RefreshTokens    RefreshToken[]
 }
 
 model Otp {
@@ -50,7 +37,6 @@ model Otp {
   codeHash  String
   expiresAt DateTime
   createdAt DateTime @default(now())
-
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -58,29 +44,24 @@ model RefreshToken {
   id        String   @id @default(uuid())
   tokenHash String
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
   expiresAt DateTime
+  user      User     @relation(fields: [userId], references: [id])
 
   @@index([userId])
   @@index([expiresAt])
 }
 
 model Game {
-  id        String   @id @default(uuid())
-  createdAt DateTime @default(now())
+  id        String         @id @default(uuid())
+  createdAt DateTime       @default(now())
   endedAt   DateTime?
-
-  white     User?    @relation("WhitePlayer", fields: [whiteId], references: [id])
   whiteId   String?
-
-  black     User?    @relation("BlackPlayer", fields: [blackId], references: [id])
   blackId   String?
-
-  result    GameResult @default(ONGOING)
-
+  result    GameResult     @default(ONGOING)
   endReason GameEndReason?
-
+  black     User?          @relation("BlackPlayer", fields: [blackId], references: [id])
+  white     User?          @relation("WhitePlayer", fields: [whiteId], references: [id])
   moves     Move[]
 }
 
@@ -88,30 +69,21 @@ model Move {
   id        Int    @id @default(autoincrement())
   gameId    String
   moveIndex Int
-
   fromRow   Int
   fromCol   Int
   toRow     Int
   toCol     Int
-
   game      Game   @relation(fields: [gameId], references: [id])
 }
 
 model FriendRequest {
-  id        String   @id @default(uuid())
+  id        String              @id @default(uuid())
   fromId    String
   toId      String
   status    FriendRequestStatus @default(PENDING)
-  createdAt DateTime @default(now())
-
-  from      User     @relation("FromUser", fields: [fromId], references: [id])
-  to        User     @relation("ToUser", fields: [toId], references: [id])
-}
-
-enum FriendRequestStatus {
-  PENDING
-  ACCEPTED
-  REJECTED
+  createdAt DateTime            @default(now())
+  from      User                @relation("FromUser", fields: [fromId], references: [id])
+  to        User                @relation("ToUser", fields: [toId], references: [id])
 }
 
 model Friendship {
@@ -119,20 +91,24 @@ model Friendship {
   userId    String
   friendId  String
   createdAt DateTime @default(now())
-
-  user      User     @relation("UserFriends", fields: [userId], references: [id])
   friend    User     @relation("FriendUsers", fields: [friendId], references: [id])
+  user      User     @relation("UserFriends", fields: [userId], references: [id])
 }
 
 model Message {
-  id        String   @id @default(uuid())
-  senderId  String
+  id         String   @id @default(uuid())
+  senderId   String
   receiverId String?
-  gameId    String?
-  content   String
-  createdAt DateTime @default(now())
+  gameId     String?
+  content    String
+  createdAt  DateTime @default(now())
+  sender     User     @relation("UserMessages", fields: [senderId], references: [id])
+}
 
-  sender    User     @relation("UserMessages", fields: [senderId], references: [id])
+enum FriendRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
 }
 
 enum GameResult {

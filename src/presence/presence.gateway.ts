@@ -11,7 +11,10 @@ import { FriendsService } from 'src/friends/friends.service';
 
 @WebSocketGateway({
   namespace: '/presence',
-  cors: { origin: 'http://localhost:3000', credentials: true },
+  cors: {
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    credentials: true,
+  },
 })
 export class PresenceGateway {
   @WebSocketServer() server!: Server;
