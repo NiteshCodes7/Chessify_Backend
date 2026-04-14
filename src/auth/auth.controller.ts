@@ -19,16 +19,16 @@ import { getGoogleProfile } from './google';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AccessGuard } from './guards/access.guard';
 
-const COOKIE_OPTIONS = {
-  httpOnly: true,
-  sameSite:
-    process.env.NODE_ENV === 'production'
-      ? ('none' as const)
-      : ('lax' as const),
-  secure: process.env.NODE_ENV === 'production',
-  path: '/',
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-};
+// const COOKIE_OPTIONS = {
+//   httpOnly: true,
+//   sameSite:
+//     process.env.NODE_ENV === 'production'
+//       ? ('none' as const)
+//       : ('lax' as const),
+//   secure: process.env.NODE_ENV === 'production',
+//   path: '/',
+//   maxAge: 7 * 24 * 60 * 60 * 1000,
+// };
 
 @Controller('auth')
 export class AuthController {
@@ -87,9 +87,7 @@ export class AuthController {
     const { accessToken, refreshToken, sessionToken, wsToken } =
       await this.auth.verifyOtp(body.email as string, body.otp as string);
 
-    res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
-    res.cookie('sessionToken', sessionToken, COOKIE_OPTIONS);
-    return res.send({ accessToken, wsToken });
+    return res.send({ accessToken, refreshToken, sessionToken, wsToken });
   }
 
   // RESEND OTP
@@ -113,9 +111,7 @@ export class AuthController {
 
     const sessionToken = await this.auth.sessionToken(user.id);
 
-    res.cookie('sessionToken', sessionToken, COOKIE_OPTIONS);
-    res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
-    return res.send({ accessToken, wsToken });
+    return res.send({ accessToken, refreshToken, sessionToken, wsToken });
   }
 
   // FORGOT PASSWORD
@@ -151,9 +147,7 @@ export class AuthController {
     const { accessToken, refreshToken, sessionToken, wsToken } =
       await this.auth.refreshTokens(token as string);
 
-    res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
-    res.cookie('sessionToken', sessionToken, COOKIE_OPTIONS);
-    return res.send({ accessToken, wsToken });
+    return res.send({ accessToken, refreshToken, sessionToken, wsToken });
   }
 
   // LOGOUT
@@ -180,15 +174,14 @@ export class AuthController {
     const { accessToken, refreshToken, sessionToken, wsToken } =
       await this.auth.googleLogin(profile);
 
-    res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
-    res.cookie('sessionToken', sessionToken, COOKIE_OPTIONS);
-
     return res.send(`
     <script>
       window.opener.postMessage(
         {
           accessToken: "${accessToken}",
-          wsToken: "${wsToken}"
+          wsToken: "${wsToken}",
+          refreshToken: "${refreshToken}",
+          sessionToken: "${sessionToken}"
         },
         "${process.env.FRONTEND_URL || 'http://localhost:3000'}"
       );
