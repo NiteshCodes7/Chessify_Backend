@@ -18,6 +18,7 @@ import { ChatModule } from './chat/chat.module';
 import { MailModule } from './mail/mail.module';
 import { UsersController } from './users/users.controller';
 import { UsersModule } from './users/users.module';
+import { AppController } from './app.controller';
 
 @Module({
   imports: [
@@ -44,6 +45,6 @@ import { UsersModule } from './users/users.module';
     FriendsService,
     ChatService,
   ],
-  controllers: [RatingController, UsersController, AbortController],
+  controllers: [RatingController, UsersController, AppController],
 })
 export class AppModule {}
