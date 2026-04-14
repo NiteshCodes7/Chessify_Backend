@@ -5,7 +5,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { FriendRequestStatus } from 'generated/prisma/client';
+import { FriendRequestStatus } from '@prisma/client';
 import { PresenceService } from 'src/presence/presence.service';
 
 @Injectable()

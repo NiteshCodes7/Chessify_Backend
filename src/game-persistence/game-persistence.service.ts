@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { GameEndReason, GameResult } from 'generated/prisma/client';
+import { GameEndReason, GameResult } from '@prisma/client';
 
 @Injectable()
 export class GamePersistenceService {

@@ -10,7 +10,7 @@ import { MatchmakingService } from '../matchmaking/matchmaking.service';
 import { isMoveLegal } from '../chess/isMoveLegal';
 import { games, getGame, rematchRequests } from './game.store';
 import { GamePersistenceService } from '../game-persistence/game-persistence.service';
-import { GameEndReason, GameResult } from 'generated/prisma/client';
+import { GameEndReason, GameResult } from '@prisma/client';
 import { getGameStatus } from 'src/chess/getGameStatus';
 import { playerGameMap } from './player-map';
 import { JwtService } from '@nestjs/jwt';
