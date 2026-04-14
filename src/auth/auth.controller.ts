@@ -84,12 +84,11 @@ export class AuthController {
   // VERIFY OTP
   @Post('verify-otp')
   async verifyOtp(@Body() body, @Res() res: Response) {
-    const { accessToken, refreshToken, wsToken } = await this.auth.verifyOtp(
-      body.email as string,
-      body.otp as string,
-    );
+    const { accessToken, refreshToken, sessionToken, wsToken } =
+      await this.auth.verifyOtp(body.email as string, body.otp as string);
 
     res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
+    res.cookie('sessionToken', sessionToken, COOKIE_OPTIONS);
     return res.send({ accessToken, wsToken });
   }
 
@@ -115,7 +114,6 @@ export class AuthController {
     const sessionToken = await this.auth.sessionToken(user.id);
 
     res.cookie('sessionToken', sessionToken, COOKIE_OPTIONS);
-
     res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
     return res.send({ accessToken, wsToken });
   }
@@ -150,10 +148,11 @@ export class AuthController {
     const token = req.cookies.refreshToken;
     if (!token) throw new UnauthorizedException('No refresh cookie');
 
-    const { accessToken, refreshToken, wsToken } =
+    const { accessToken, refreshToken, sessionToken, wsToken } =
       await this.auth.refreshTokens(token as string);
 
     res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
+    res.cookie('sessionToken', sessionToken, COOKIE_OPTIONS);
     return res.send({ accessToken, wsToken });
   }
 
@@ -163,6 +162,7 @@ export class AuthController {
     const token = req.cookies.refreshToken;
     await this.auth.logout(token as string);
     res.clearCookie('refreshToken');
+    res.clearCookie('sessionToken');
     return res.send({ ok: true });
   }
 
@@ -177,10 +177,11 @@ export class AuthController {
   async googleCallback(@Query('code') code: string, @Res() res: Response) {
     const profile = await getGoogleProfile(code);
 
-    const { accessToken, refreshToken, wsToken } =
+    const { accessToken, refreshToken, sessionToken, wsToken } =
       await this.auth.googleLogin(profile);
 
     res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
+    res.cookie('sessionToken', sessionToken, COOKIE_OPTIONS);
 
     return res.send(`
     <script>

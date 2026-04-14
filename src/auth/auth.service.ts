@@ -299,6 +299,11 @@ export class AuthService {
       { secret: process.env.JWT_ACCESS_SECRET!, expiresIn: '10m' },
     );
 
+    const sessionToken = await this.jwt.signAsync(
+      { sub: userId },
+      { secret: process.env.JWT_ACCESS_SECRET!, expiresIn: '7d' },
+    );
+
     const tokenId = randomUUID();
     const rawToken = randomUUID();
     const fullToken = `${tokenId}.${rawToken}`;
@@ -315,7 +320,12 @@ export class AuthService {
       },
     });
 
-    return { accessToken, refreshToken: fullToken, wsToken };
+    return {
+      accessToken,
+      sessionToken,
+      refreshToken: fullToken,
+      wsToken,
+    };
   }
 
   // Session Token
