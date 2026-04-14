@@ -299,6 +299,8 @@ export class AuthService {
       { secret: process.env.JWT_ACCESS_SECRET!, expiresIn: '10m' },
     );
 
+    const sessionToken = await this.sessionToken(userId);
+
     const tokenId = randomUUID();
     const rawToken = randomUUID();
     const fullToken = `${tokenId}.${rawToken}`;
@@ -315,7 +317,7 @@ export class AuthService {
       },
     });
 
-    return { accessToken, refreshToken: fullToken, wsToken };
+    return { accessToken, refreshToken: fullToken, sessionToken, wsToken };
   }
 
   // Session Token
