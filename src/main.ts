@@ -5,7 +5,6 @@ import cookieParser from 'cookie-parser';
 function validateEnv() {
   const required = [
     'DATABASE_URL',
-    'REDIS_URL',
     'JWT_ACCESS_SECRET',
     'JWT_WS_SECRET',
     'FRONTEND_URL',

@@ -20,6 +20,8 @@ import { PresenceService } from 'src/presence/presence.service';
 import type { ExtendedSocket } from 'src/types/chess';
 import { PresenceGateway } from 'src/presence/presence.gateway';
 import { randomUUID } from 'node:crypto';
+import { PrismaService } from 'src/prisma/prisma.service';
+import { getSan } from 'src/chess/getSan';
 
 @WebSocketGateway({
   cors: {
@@ -35,6 +37,7 @@ export class GameGateway {
     private readonly jwt: JwtService,
     private readonly presence: PresenceService,
     private readonly presenceGateway: PresenceGateway,
+    private readonly prisma: PrismaService,
   ) {}
 
   @WebSocketServer()
@@ -339,6 +342,11 @@ export class GameGateway {
     const userId = socket.data.userId;
     if (!userId) return;
 
+    const sender = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, username: true },
+    });
+
     // Check if friend is online
     const presenceSockets = await this.presenceGateway.server
       .in(`user:${friendId}`)
@@ -379,6 +387,7 @@ export class GameGateway {
     this.server.to(`user:${friendId}`).emit('game_invite', {
       inviteId,
       from: userId,
+      fromName: sender?.username ?? sender?.name ?? 'A friend',
     });
 
     socket.emit('invite_sent', { inviteId, friendId });
@@ -657,6 +666,8 @@ export class GameGateway {
     // ✅ Apply move
     const newBoard = board.map((r) => r.slice());
 
+    const san = getSan(board, data.from, data.to);
+
     // Pawn promotion detection
     if (
       piece.type === 'pawn' &&
@@ -678,6 +689,7 @@ export class GameGateway {
         time: game.time,
         lastTimestamp: game.lastTimestamp,
         status: 'promotion',
+        san,
       });
 
       this.server.to(data.gameId).emit('promotion_needed', {
@@ -740,6 +752,7 @@ export class GameGateway {
       time: game.time,
       lastTimestamp: game.lastTimestamp,
       status,
+      san,
     });
 
     this.server.to(data.gameId).emit('state_update', {
@@ -768,6 +781,7 @@ export class GameGateway {
     this.scheduleClockTimeout(data.gameId);
   }
 
+  // finalize game
   private async finalizeGame(
     gameId: string,
     state: 'checkmate' | 'stalemate' | 'timeout' | 'abandoned' | 'resignation',
