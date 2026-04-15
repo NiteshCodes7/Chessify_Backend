@@ -1,7 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
 import cookieParser from 'cookie-parser';
-import helmet from 'helmet';
 
 function validateEnv() {
   const required = [
@@ -21,13 +20,7 @@ function validateEnv() {
 async function bootstrap() {
   validateEnv();
   const app = await NestFactory.create(AppModule);
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-call
   app.use(cookieParser());
-  app.use(
-    helmet({
-      crossOriginOpenerPolicy: false,
-    }),
-  );
   app.enableCors({
     origin: (
       origin: string | undefined,
@@ -36,7 +29,8 @@ async function bootstrap() {
       if (
         !origin ||
         origin.endsWith('.vercel.app') ||
-        origin === process.env.FRONTEND_URL
+        origin === process.env.FRONTEND_URL ||
+        origin === 'http://localhost:3000'
       ) {
         return callback(null, true);
       }

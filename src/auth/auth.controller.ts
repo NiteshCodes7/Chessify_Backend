@@ -21,7 +21,7 @@ import { AccessGuard } from './guards/access.guard';
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
-  sameSite: 'none' as const,
+  sameSite: 'lax' as const,
   secure: true,
   path: '/',
   maxAge: 7 * 24 * 60 * 60 * 1000,
@@ -176,6 +176,7 @@ export class AuthController {
         wsToken,
       });
 
+      res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
       return res.send(`
       <script>
         window.opener.postMessage(${data}, "${process.env.FRONTEND_URL}");
