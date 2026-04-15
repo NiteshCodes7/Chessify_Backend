@@ -164,28 +164,32 @@ export class AuthController {
 
   @Get('google/callback')
   async googleCallback(@Query('code') code: string, @Res() res: Response) {
-    const profile = await getGoogleProfile(code);
+    try {
+      const profile = await getGoogleProfile(code);
+      const { accessToken, refreshToken, sessionToken, wsToken } =
+        await this.auth.googleLogin(profile);
 
-    const { accessToken, refreshToken, sessionToken, wsToken } =
-      await this.auth.googleLogin(profile);
+      const data = JSON.stringify({
+        accessToken,
+        refreshToken,
+        sessionToken,
+        wsToken,
+      });
 
-    const data = JSON.stringify({
-      accessToken,
-      refreshToken,
-      sessionToken,
-      wsToken,
-    });
-
-    res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
-
-    return res.send(`
-    <script>
-      window.opener.postMessage(
-        ${data},
-        "${process.env.FRONTEND_URL || 'http://localhost:3000'}"
-      );
-      window.close();
-    </script>
-  `);
+      return res.send(`
+      <script>
+        window.opener.postMessage(${data}, "${process.env.FRONTEND_URL}");
+        window.close();
+      </script>
+    `);
+    } catch (e) {
+      console.error('Google callback error:', e);
+      return res.send(`
+      <script>
+        window.opener?.postMessage({ error: "google_failed" }, "${process.env.FRONTEND_URL}");
+        window.close();
+      </script>
+    `);
+    }
   }
 }

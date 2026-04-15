@@ -23,7 +23,11 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   // eslint-disable-next-line @typescript-eslint/no-unsafe-call
   app.use(cookieParser());
-  app.use(helmet());
+  app.use(
+    helmet({
+      crossOriginOpenerPolicy: false,
+    }),
+  );
   app.enableCors({
     origin: (
       origin: string | undefined,
