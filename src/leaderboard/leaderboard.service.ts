@@ -19,6 +19,7 @@ export class LeaderboardService {
         id: true,
         username: true,
         rating: true,
+        avatar: true,
       },
     });
 
@@ -65,6 +66,7 @@ export class LeaderboardService {
           id: user.id,
           username: user.username,
           rating: user.rating,
+          avatar: user.avatar,
           wins,
           losses,
           draws,
