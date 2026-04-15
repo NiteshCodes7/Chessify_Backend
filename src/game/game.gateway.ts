@@ -153,7 +153,12 @@ export class GameGateway {
 
       // Check if still disconnected
       const roomSockets = await this.server.in(`user:${userId}`).fetchSockets();
-      if (roomSockets.length > 0) return; // reconnected, ignore
+
+      const activeInGame = roomSockets.some((s) =>
+        s.rooms.has(gameData.gameId),
+      );
+
+      if (activeInGame) return;
 
       console.log(`[game] ${userId} abandoned game ${gameData.gameId}`);
 
