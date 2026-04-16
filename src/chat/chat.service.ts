@@ -42,4 +42,13 @@ export class ChatService {
       },
     });
   }
+
+  deleteMessage(messageId: string, userId: string) {
+    return this.prisma.message.deleteMany({
+      where: {
+        id: messageId,
+        senderId: userId,
+      },
+    });
+  }
 }

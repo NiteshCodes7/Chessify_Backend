@@ -82,6 +82,24 @@ export class ChatGateway {
     this.server.to(`user:${data.to}`).emit('dm', payload);
   }
 
+  @SubscribeMessage('delete_message')
+  async handleDeleteMessage(
+    @ConnectedSocket() socket: ExtendedSocket,
+    @MessageBody() data: { messageId: string; to: string },
+  ) {
+    const from = socket.data.userId;
+    if (!from) return;
+
+    await this.chatService.deleteMessage(data.messageId, from);
+
+    this.server
+      .to(`user:${from}`)
+      .emit('message_deleted', { messageId: data.messageId });
+    this.server
+      .to(`user:${data.to}`)
+      .emit('message_deleted', { messageId: data.messageId });
+  }
+
   @SubscribeMessage('game_chat')
   async handleGameChat(
     @ConnectedSocket() socket: ExtendedSocket,
