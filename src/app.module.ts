@@ -21,6 +21,8 @@ import { UsersModule } from './users/users.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
+import { CloudinaryService } from './cloudinary/cloudinary.service';
+import { CloudinaryModule } from './cloudinary/cloudinary.module';
 
 @Module({
   imports: [
@@ -40,6 +42,7 @@ import { LeaderboardModule } from './leaderboard/leaderboard.module';
     MailModule,
     UsersModule,
     LeaderboardModule,
+    CloudinaryModule,
   ],
   providers: [
     MatchmakingService,
@@ -48,6 +51,7 @@ import { LeaderboardModule } from './leaderboard/leaderboard.module';
     FriendsService,
     ChatService,
     AppService,
+    CloudinaryService,
   ],
   controllers: [RatingController, UsersController, AppController],
 })

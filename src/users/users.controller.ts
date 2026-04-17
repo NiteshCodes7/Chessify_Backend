@@ -1,9 +1,23 @@
-import { Body, Controller, Get, Patch, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Patch,
+  Post,
+  Req,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AccessGuard } from 'src/auth/guards/access.guard';
 import { Request } from 'express';
 import { GameEndReason } from '@prisma/client';
 import { AuthService } from 'src/auth/auth.service';
+import * as multer from 'multer';
+import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
 
 export interface RequestWithUser extends Request {
   user: {
@@ -16,6 +30,7 @@ export class UsersController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly authService: AuthService,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   @UseGuards(AccessGuard)
@@ -108,5 +123,38 @@ export class UsersController {
     });
 
     return updated;
+  }
+
+  @UseGuards(AccessGuard)
+  @Post('me/avatar')
+  @UseInterceptors(FileInterceptor('file', { storage: multer.memoryStorage() }))
+  async uploadAvatar(
+    @Req() req: RequestWithUser,
+    @UploadedFile()
+    file: { buffer: Buffer; mimetype: string; originalname: string },
+  ) {
+    const userId = req.user.userId;
+    const url = await this.cloudinaryService.uploadAvatar(file, userId);
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatar: url },
+    });
+
+    return { url };
+  }
+
+  @UseGuards(AccessGuard)
+  @Delete('me/avatar')
+  async deleteAvatar(@Req() req: RequestWithUser) {
+    const userId = req.user.userId;
+
+    await this.cloudinaryService.deleteAvatar(userId);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatar: null },
+    });
+
+    return { success: true };
   }
 }
