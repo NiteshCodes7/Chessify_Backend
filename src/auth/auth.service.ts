@@ -334,7 +334,7 @@ export class AuthService {
   async createWsToken(userId: string) {
     return this.jwt.signAsync(
       { sub: userId },
-      { secret: process.env.JWT_WS_SECRET!, expiresIn: '12h' },
+      { secret: process.env.JWT_WS_SECRET!, expiresIn: '1h' },
     );
   }
 

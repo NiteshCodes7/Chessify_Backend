@@ -855,7 +855,7 @@ export class GameGateway {
       if (state === 'abandoned' && winner) {
         const abandonerId =
           winner === 'white' ? game.players.black : game.players.white;
-        const BAN_DURATION = 2 * 60 * 1000; // 2 minutes
+        const BAN_DURATION = 5 * 60 * 1000; // 5 minutes
         await this.presence.setBan(abandonerId, BAN_DURATION);
         console.log(`[game] banned ${abandonerId} for ${BAN_DURATION / 1000}s`);
       }
