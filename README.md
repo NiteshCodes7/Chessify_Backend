@@ -395,4 +395,4 @@ generator client {
 
 ## Related
 
-- [Chessify Frontend](../frontend/README.md)
+- [Chessify Frontend](https://github.com/NiteshCodes7/Chessify_Frontend)
